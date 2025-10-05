@@ -3,8 +3,10 @@ import LogsView from "./LogsView";
 
 export default function LogsPage() {
   return (
-    <RelayProvider>
-      <LogsView />
-    </RelayProvider>
+    <div className="p-8">
+      <RelayProvider>
+        <LogsView />
+      </RelayProvider>
+    </div>
   );
 }

@@ -1,0 +1,330 @@
+"use client";
+
+import Link from "next/link";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, type PayloadError } from "react-relay";
+
+import { createLearningLogMutation } from "@/relay/mutations/createLearningLogMutation";
+import { learningLogCreateSchema, mapZodIssuesToFieldErrors } from "@/lib/validation";
+
+const FIELD_KEYS = ["title", "reflection", "tags", "timeSpent", "sourceUrl"] as const;
+type FieldKey = (typeof FIELD_KEYS)[number];
+type FieldErrors = Partial<Record<FieldKey, string>>;
+
+type QuickAddFormState = {
+  title: string;
+  reflection: string;
+  tags: string;
+  timeSpent: string;
+  sourceUrl: string;
+};
+
+const initialFormState: QuickAddFormState = {
+  title: "",
+  reflection: "",
+  tags: "",
+  timeSpent: "30",
+  sourceUrl: "",
+};
+
+const parseCsv = (value: string): string[] =>
+  value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
+
+const extractValidationFields = (errors?: readonly PayloadError[] | null) => {
+  if (!errors || errors.length === 0) {
+    return null;
+  }
+  const validationError = errors.find((error) => error?.message === "VALIDATION_ERROR");
+  if (!validationError) {
+    return null;
+  }
+  return (validationError.extensions?.fields ?? null) as Record<string, string> | null;
+};
+
+const mergeFieldErrors = (fields: Record<string, string>): FieldErrors => {
+  const next: FieldErrors = {};
+  for (const key of FIELD_KEYS) {
+    if (key in fields) {
+      next[key] = fields[key];
+    }
+  }
+  return next;
+};
+
+const buildCreateCandidate = (state: QuickAddFormState) => {
+  const tags = parseCsv(state.tags);
+  const title = state.title.trim();
+  const reflection = state.reflection.trim();
+  const timeInput = state.timeSpent.trim();
+  const sourceUrl = state.sourceUrl.trim();
+
+  return {
+    title,
+    reflection,
+    tags,
+    timeSpent: timeInput === "" ? Number.NaN : Number(timeInput),
+    sourceUrl: sourceUrl === "" ? undefined : sourceUrl,
+  };
+};
+
+const createTempId = () => `client:quick-add:${Date.now()}`;
+
+export default function QuickAddCard() {
+  const [commitCreate, isInFlight] = useMutation(createLearningLogMutation);
+  const [form, setForm] = useState<QuickAddFormState>(initialFormState);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "success">("idle");
+  const [lastSavedTitle, setLastSavedTitle] = useState<string>("");
+  const titleRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isInFlight && status !== "success") {
+      const frame = requestAnimationFrame(() => {
+        titleRef.current?.focus();
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+    return undefined;
+  }, [isInFlight, status]);
+
+  const handleChange = (key: FieldKey) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    setForm((prev) => ({ ...prev, [key]: value }));
+    if (fieldErrors[key]) {
+      setFieldErrors((prev) => ({ ...prev, [key]: undefined }));
+    }
+  };
+
+  const createValidation = useMemo(
+    () => learningLogCreateSchema.safeParse(buildCreateCandidate(form)),
+    [form],
+  );
+
+  const derivedFieldErrors = useMemo(() => {
+    if (createValidation.success) {
+      return {} as FieldErrors;
+    }
+    return mergeFieldErrors(mapZodIssuesToFieldErrors(createValidation.error.issues));
+  }, [createValidation]);
+
+  const visibleFieldErrors = useMemo(
+    () => ({
+      ...derivedFieldErrors,
+      ...fieldErrors,
+    }),
+    [derivedFieldErrors, fieldErrors],
+  );
+
+  const isSubmitDisabled = isInFlight || !createValidation.success;
+
+  const applyFieldErrors = (fields: Record<string, string>) => {
+    setFieldErrors((prev) => ({ ...prev, ...mergeFieldErrors(fields) }));
+    setSubmitError("Please fix the highlighted fields.");
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitError(null);
+
+    const validation = learningLogCreateSchema.safeParse(buildCreateCandidate(form));
+
+    if (!validation.success) {
+      applyFieldErrors(mapZodIssuesToFieldErrors(validation.error.issues));
+      return;
+    }
+
+    const payload = validation.data;
+    const optimisticId = createTempId();
+    const now = new Date().toISOString();
+
+    commitCreate({
+      variables: {
+        input: {
+          title: payload.title,
+          reflection: payload.reflection,
+          tags: payload.tags,
+          timeSpent: payload.timeSpent,
+          sourceUrl: payload.sourceUrl ?? null,
+        },
+      },
+      optimisticResponse: {
+        createLearningLog: {
+          log: {
+            id: optimisticId,
+            title: payload.title,
+            reflection: payload.reflection,
+            tags: payload.tags,
+            timeSpent: payload.timeSpent,
+            sourceUrl: payload.sourceUrl ?? null,
+            createdAt: now,
+          },
+        },
+      },
+      onCompleted: (response, errors) => {
+        const validationFields = extractValidationFields(errors);
+        if (validationFields) {
+          applyFieldErrors(validationFields);
+          return;
+        }
+
+        setFieldErrors({});
+        setStatus("success");
+        setLastSavedTitle(response?.createLearningLog?.log?.title ?? payload.title);
+        setForm(initialFormState);
+      },
+      onError: (error) => {
+        setSubmitError(error.message);
+      },
+    });
+  };
+
+  const resetForm = () => {
+    setStatus("idle");
+    setSubmitError(null);
+    setFieldErrors({});
+    setForm(initialFormState);
+    requestAnimationFrame(() => {
+      titleRef.current?.focus();
+    });
+  };
+
+  return (
+    <section className="glass-panel mx-auto max-w-2xl rounded-xl p-8">
+      <h2 className="text-2xl font-semibold text-slate-900">Quick Add</h2>
+      <p className="mt-2 text-sm text-muted">
+        Capture a new learning log without leaving the landing page.
+      </p>
+
+      {status === "success" ? (
+        <div className="mt-6 flex flex-col gap-4">
+          <div className="rounded-lg border border-primary-200 bg-white/80 p-4 text-sm text-slate-700">
+            <p>
+              <span className="font-medium text-primary-700">Saved!</span>
+              {lastSavedTitle ? ` “${lastSavedTitle}”` : ""} captured.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={resetForm}
+              className="rounded-full border border-primary-300 px-5 py-2 text-sm font-medium text-primary-600 transition hover:border-primary-400 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+            >
+              Add another
+            </button>
+            <Link
+              href="/logs"
+              className="rounded-full bg-primary-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+            >
+              View in Logs ↗
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <form className="mt-6 grid gap-4" onSubmit={handleSubmit} noValidate>
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-slate-700" htmlFor="quick-title">
+              Title
+            </label>
+            <input
+              id="quick-title"
+              ref={titleRef}
+              disabled={isInFlight}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+              value={form.title}
+              onChange={handleChange("title")}
+              placeholder="What did you learn?"
+            />
+            {visibleFieldErrors.title ? <p className="text-xs text-red-600">{visibleFieldErrors.title}</p> : null}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-slate-700" htmlFor="quick-reflection">
+              Reflection
+            </label>
+            <textarea
+              id="quick-reflection"
+              disabled={isInFlight}
+              rows={4}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+              value={form.reflection}
+              onChange={handleChange("reflection")}
+              placeholder="Key takeaways, insights, or notes"
+            />
+            {visibleFieldErrors.reflection ? (
+              <p className="text-xs text-red-600">{visibleFieldErrors.reflection}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-slate-700" htmlFor="quick-tags">
+                Tags (CSV)
+              </label>
+              <input
+                id="quick-tags"
+                disabled={isInFlight}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                value={form.tags}
+                onChange={handleChange("tags")}
+                placeholder="react, ui"
+              />
+              {visibleFieldErrors.tags ? <p className="text-xs text-red-600">{visibleFieldErrors.tags}</p> : null}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-slate-700" htmlFor="quick-time">
+                Time spent (minutes)
+              </label>
+              <input
+                id="quick-time"
+                type="number"
+                min={1}
+                max={1440}
+                disabled={isInFlight}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                value={form.timeSpent}
+                onChange={handleChange("timeSpent")}
+              />
+              {visibleFieldErrors.timeSpent ? (
+                <p className="text-xs text-red-600">{visibleFieldErrors.timeSpent}</p>
+              ) : null}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-slate-700" htmlFor="quick-source">
+                Source URL
+              </label>
+              <input
+                id="quick-source"
+                disabled={isInFlight}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                value={form.sourceUrl}
+                onChange={handleChange("sourceUrl")}
+                placeholder="https://"
+              />
+              {visibleFieldErrors.sourceUrl ? (
+                <p className="text-xs text-red-600">{visibleFieldErrors.sourceUrl}</p>
+              ) : null}
+            </div>
+          </div>
+
+          {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
+
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              disabled={isSubmitDisabled}
+              className="rounded-full bg-primary-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-primary-300"
+            >
+              {isInFlight ? "Saving…" : "Submit"}
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}

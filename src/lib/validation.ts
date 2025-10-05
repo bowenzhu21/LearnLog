@@ -1,31 +1,30 @@
-import { z } from "zod";
+import { z, type ZodIssue } from "zod";
 
 const titleSchema = z.string().trim().min(1, "Title is required").max(120, "Keep it concise");
 const reflectionSchema = z
   .string()
   .trim()
   .min(1, "Reflection is required")
-  .max(4000, "Reflection is too long");
+  .max(2000, "Reflection is too long");
+const tagSchema = z.string().trim().min(1, "Tag cannot be empty").max(24, "Tag is too long");
 const tagsSchema = z
-  .array(z.string().trim().min(1, "Tag cannot be empty"))
+  .array(tagSchema)
   .min(1, "Add at least one tag")
-  .max(12, "Limit to 12 tags");
+  .max(20, "Limit to 20 tags");
 const timeSpentSchema = z
   .number({ invalid_type_error: "Time spent must be a number" })
   .int("Time spent must be an integer")
-  .nonnegative("Time spent cannot be negative")
+  .min(1, "Time spent must be at least 1 minute")
   .max(1440, "Keep it under 24 hours");
 
-const optionalUrl = z
-  .string()
-  .trim()
-  .url("Provide a valid URL")
-  .max(2048, "URL is too long");
-
-const sourceUrlSchema = optionalUrl
+const sourceUrlSchema = z
+  .union([
+    z.string().trim().url("Provide a valid URL"),
+    z.literal("").transform(() => undefined),
+  ])
   .optional()
-  .or(z.literal("").transform(() => undefined))
-  .or(z.null().transform(() => undefined));
+  .or(z.null().transform(() => undefined))
+  .transform((value) => (value === null || value === undefined ? undefined : value));
 
 export const learningLogCreateSchema = z.object({
   title: titleSchema,
@@ -35,14 +34,10 @@ export const learningLogCreateSchema = z.object({
   sourceUrl: sourceUrlSchema,
 });
 
-export const learningLogUpdateSchema = z
-  .object({
-    id: z.string().min(1, "Log ID required"),
-    title: titleSchema.optional(),
-    reflection: reflectionSchema.optional(),
-    tags: tagsSchema.optional(),
-    timeSpent: timeSpentSchema.optional(),
-    sourceUrl: sourceUrlSchema,
+export const learningLogUpdateSchema = learningLogCreateSchema
+  .partial()
+  .extend({
+    id: z.string().trim().min(1, "Log ID required"),
   })
   .refine(
     (value) =>
@@ -53,9 +48,19 @@ export const learningLogUpdateSchema = z
       value.sourceUrl !== undefined,
     {
       message: "Provide at least one field to update",
-      path: ["title"],
+      path: ["id"],
     },
   );
 
 export type LearningLogCreateInput = z.infer<typeof learningLogCreateSchema>;
 export type LearningLogUpdateInput = z.infer<typeof learningLogUpdateSchema>;
+export type LearningLogFieldErrors = Record<string, string>;
+
+export const mapZodIssuesToFieldErrors = (issues: ZodIssue[]): LearningLogFieldErrors =>
+  issues.reduce<LearningLogFieldErrors>((acc, issue) => {
+    const key = issue.path[0];
+    if (typeof key === "string" && !(key in acc)) {
+      acc[key] = issue.message;
+    }
+    return acc;
+  }, {});

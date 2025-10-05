@@ -1,6 +1,13 @@
 "use client";
 
-import { Dispatch, FormEvent, SetStateAction, useMemo, useState } from "react";
+import {
+  FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import {
   ConnectionHandler,
   ROOT_ID,
@@ -9,6 +16,7 @@ import {
   useMutation,
   usePaginationFragment,
   useFragment,
+  type PayloadError,
 } from "react-relay";
 import type { RecordSourceSelectorProxy } from "relay-runtime";
 
@@ -20,7 +28,7 @@ import { deleteLearningLogMutation } from "@/relay/mutations/deleteLearningLogMu
 import {
   learningLogCreateSchema,
   learningLogUpdateSchema,
-  type LearningLogCreateInput,
+  mapZodIssuesToFieldErrors,
   type LearningLogUpdateInput,
 } from "@/lib/validation";
 import type { learningLogsQuery as LearningLogsQueryType } from "@/__generated__/learningLogsQuery.graphql";
@@ -64,6 +72,30 @@ type LearningLogShape = {
   timeSpent: number;
   sourceUrl: string | null;
   createdAt: string;
+};
+
+const FIELD_KEYS = ["title", "reflection", "tags", "timeSpent", "sourceUrl"] as const;
+type FormField = (typeof FIELD_KEYS)[number];
+type FieldErrors = Partial<Record<FormField, string>>;
+const extractValidationFields = (errors?: readonly PayloadError[] | null) => {
+  if (!errors || errors.length === 0) {
+    return null;
+  }
+  const validationError = errors.find((error) => error?.message === "VALIDATION_ERROR");
+  if (!validationError) {
+    return null;
+  }
+  return (validationError.extensions?.fields ?? null) as Record<string, string> | null;
+};
+
+const mergeFieldErrors = (fields: Record<string, string>): FieldErrors => {
+  const next: FieldErrors = {};
+  for (const key of FIELD_KEYS) {
+    if (key in fields) {
+      next[key] = fields[key];
+    }
+  }
+  return next;
 };
 
 const logsViewFragment = graphql`
@@ -115,6 +147,68 @@ const parseCsv = (value: string): string[] =>
     .map((tag) => tag.trim())
     .filter((tag) => tag.length > 0);
 
+const buildCreateCandidate = (state: CreateFormState) => {
+  const title = state.title.trim();
+  const reflection = state.reflection.trim();
+  const tags = Array.from(new Set(parseCsv(state.tags))).sort();
+  const timeInput = state.timeSpent.trim();
+  const sourceUrl = state.sourceUrl.trim();
+
+  return {
+    title,
+    reflection,
+    tags,
+    timeSpent: timeInput === "" ? Number.NaN : Number(timeInput),
+    sourceUrl: sourceUrl === "" ? undefined : sourceUrl,
+  };
+};
+
+const buildUpdateCandidate = (
+  id: string,
+  state: CreateFormState,
+  original: LearningLogShape | null,
+): Record<string, unknown> | null => {
+  const title = state.title.trim();
+  const reflection = state.reflection.trim();
+  const tags = Array.from(new Set(parseCsv(state.tags))).sort();
+  const timeInput = state.timeSpent.trim();
+  const timeSpent = timeInput === "" ? Number.NaN : Number(timeInput);
+  const sourceUrlRaw = state.sourceUrl.trim();
+
+  const next: Record<string, unknown> = { id };
+
+  if (title && title !== original?.title) {
+    next.title = title;
+  }
+
+  if (reflection && reflection !== original?.reflection) {
+    next.reflection = reflection;
+  }
+
+  if (tags.length > 0) {
+    const originalTags = Array.from(new Set(original?.tags ?? [])).sort();
+    const tagsChanged =
+      tags.length !== originalTags.length ||
+      tags.some((tag, index) => tag !== originalTags[index]);
+
+    if (tagsChanged) {
+      next.tags = tags;
+    }
+  }
+
+  if (Number.isFinite(timeSpent) && timeSpent > 0 && timeSpent !== original?.timeSpent) {
+    next.timeSpent = timeSpent;
+  }
+
+  const normalizedSourceUrl = sourceUrlRaw === "" ? undefined : sourceUrlRaw;
+  const originalSourceUrl = original?.sourceUrl ?? undefined;
+  if (normalizedSourceUrl !== originalSourceUrl) {
+    next.sourceUrl = normalizedSourceUrl ?? null;
+  }
+
+  return Object.keys(next).length > 1 ? next : null;
+};
+
 const formatDate = (value: string): string => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -164,10 +258,16 @@ export default function LogsView() {
   const [activeFilter, setActiveFilter] = useState<LearningLogFilterInput | null>(null);
   const [createForm, setCreateForm] = useState<CreateFormState>(initialCreateState);
   const [createError, setCreateError] = useState<MutationError>(null);
+  const [createErrors, setCreateErrors] = useState<FieldErrors>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<CreateFormState>(initialCreateState);
   const [editError, setEditError] = useState<MutationError>(null);
+  const [editErrors, setEditErrors] = useState<FieldErrors>({});
+  const [editingOriginal, setEditingOriginal] = useState<LearningLogShape | null>(null);
   const [deleteError, setDeleteError] = useState<MutationError>(null);
+  const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
+
+  const createTitleRef = useRef<HTMLInputElement>(null);
 
   const baseData = useLazyLoadQuery<LearningLogsQueryType>(learningLogsQuery, {
     first: DEFAULT_PAGE_SIZE,
@@ -189,35 +289,93 @@ export default function LogsView() {
   }, [data.learningLogs?.edges]);
 
   const connectionFilters = useMemo(() => getConnectionFilters(activeFilter), [activeFilter]);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      createTitleRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const createValidation = useMemo(
+    () => learningLogCreateSchema.safeParse(buildCreateCandidate(createForm)),
+    [createForm],
+  );
+  const isCreateFormValid = createValidation.success;
+
+  const derivedCreateErrors = useMemo(() => {
+    if (createValidation.success) {
+      return {} as FieldErrors;
+    }
+    return mergeFieldErrors(mapZodIssuesToFieldErrors(createValidation.error.issues));
+  }, [createValidation]);
+
+  const visibleCreateErrors = useMemo(
+    () => ({
+      ...derivedCreateErrors,
+      ...createErrors,
+    }),
+    [derivedCreateErrors, createErrors],
+  );
+
+  const editCandidate = useMemo(() => {
+    if (!editingId) {
+      return null;
+    }
+    return buildUpdateCandidate(editingId, editForm, editingOriginal);
+  }, [editingId, editForm, editingOriginal]);
+
+  const editValidation = useMemo(() => {
+    if (!editCandidate) {
+      return null;
+    }
+    return learningLogUpdateSchema.safeParse(editCandidate);
+  }, [editCandidate]);
+
+  const derivedEditErrors = useMemo(() => {
+    if (!editValidation || editValidation.success) {
+      return {} as FieldErrors;
+    }
+    return mergeFieldErrors(mapZodIssuesToFieldErrors(editValidation.error.issues));
+  }, [editValidation]);
+
+  const visibleEditErrors = useMemo(
+    () => ({
+      ...derivedEditErrors,
+      ...editErrors,
+    }),
+    [derivedEditErrors, editErrors],
+  );
 
   const resetCreateForm = () => {
     setCreateForm(initialCreateState);
     setCreateError(null);
+    setCreateErrors({});
+    requestAnimationFrame(() => {
+      createTitleRef.current?.focus();
+    });
   };
 
   const handleCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setCreateError(null);
 
-    const tags = parseCsv(createForm.tags);
-    const timeSpent = Number(createForm.timeSpent);
+    const validation = learningLogCreateSchema.safeParse(buildCreateCandidate(createForm));
 
-    let payload: LearningLogCreateInput;
-    try {
-      payload = learningLogCreateSchema.parse({
-        title: createForm.title,
-        reflection: createForm.reflection,
-        tags,
-        timeSpent,
-        sourceUrl: createForm.sourceUrl || undefined,
-      });
-    } catch (error) {
-      setCreateError(error instanceof Error ? error.message : "Invalid input");
+    if (!validation.success) {
+      setCreateErrors((prev) => ({
+        ...prev,
+        ...mergeFieldErrors(mapZodIssuesToFieldErrors(validation.error.issues)),
+      }));
+      setCreateError("Please fix the highlighted fields.");
       return;
     }
 
+    const payload = validation.data;
     const optimisticId = createTempId();
     const now = new Date().toISOString();
+
+    setCreateErrors({});
+    setPendingScrollId(optimisticId);
 
     const insertIntoConnection = (store: RecordSourceSelectorProxy, recordId: string) => {
       const root = store.get(ROOT_ID);
@@ -284,14 +442,29 @@ export default function LogsView() {
         ConnectionHandler.deleteNode(connection, optimisticId);
         insertIntoConnection(store, logRecord.getDataID());
       },
-      onCompleted: () => {
+      onCompleted: (response, errors) => {
+        const validationFields = extractValidationFields(errors);
+        if (validationFields) {
+          setCreateErrors((prev) => ({
+            ...prev,
+            ...mergeFieldErrors(validationFields),
+          }));
+          setCreateError("Please fix the highlighted fields.");
+          setPendingScrollId(null);
+          return;
+        }
+
+        const newId = response?.createLearningLog?.log?.id ?? optimisticId;
+        setPendingScrollId(newId);
         resetCreateForm();
       },
       onError: (error) => {
+        setPendingScrollId(null);
         setCreateError(error.message);
       },
     });
   };
+
 
   const startEdit = (log: LearningLogShape) => {
     setEditForm({
@@ -302,13 +475,17 @@ export default function LogsView() {
       sourceUrl: log.sourceUrl ?? "",
     });
     setEditingId(log.id);
+    setEditingOriginal(log);
     setEditError(null);
+    setEditErrors({});
   };
 
   const cancelEdit = () => {
     setEditingId(null);
+    setEditingOriginal(null);
     setEditForm(initialCreateState);
     setEditError(null);
+    setEditErrors({});
   };
 
   const handleUpdate = (event: FormEvent<HTMLFormElement>) => {
@@ -316,46 +493,72 @@ export default function LogsView() {
     if (!editingId) {
       return;
     }
-    setEditError(null);
-
-    const tags = parseCsv(editForm.tags);
-    const timeSpent = editForm.timeSpent ? Number(editForm.timeSpent) : undefined;
-
-    let payload: LearningLogUpdateInput;
-    try {
-      payload = learningLogUpdateSchema.parse({
-        id: editingId,
-        title: editForm.title || undefined,
-        reflection: editForm.reflection || undefined,
-        tags: tags.length > 0 ? tags : undefined,
-        timeSpent,
-        sourceUrl: editForm.sourceUrl || undefined,
-      });
-    } catch (error) {
-      setEditError(error instanceof Error ? error.message : "Invalid input");
+    if (!editCandidate) {
+      setEditError("Nothing changed to update.");
       return;
+    }
+    setEditError(null);
+    setEditErrors({});
+
+    const validation = editValidation ?? learningLogUpdateSchema.safeParse(editCandidate);
+
+    if (!validation || !validation.success) {
+      const issues = validation?.error?.issues ?? [];
+      setEditErrors((prev) => ({
+        ...prev,
+        ...mergeFieldErrors(mapZodIssuesToFieldErrors(issues)),
+      }));
+      setEditError("Please fix the highlighted fields.");
+      return;
+    }
+
+    const payload = validation.data;
+    const input: LearningLogUpdateInput = { id: payload.id };
+    const optimisticData: Partial<LearningLogShape> & { id: string } = {
+      id: payload.id,
+    };
+
+    if (payload.title !== undefined) {
+      input.title = payload.title;
+      optimisticData.title = payload.title;
+    }
+    if (payload.reflection !== undefined) {
+      input.reflection = payload.reflection;
+      optimisticData.reflection = payload.reflection;
+    }
+    if (payload.tags !== undefined) {
+      input.tags = payload.tags;
+      optimisticData.tags = payload.tags;
+    }
+    if (payload.timeSpent !== undefined) {
+      input.timeSpent = payload.timeSpent;
+      optimisticData.timeSpent = payload.timeSpent;
+    }
+    const hasSourceUrl = Object.prototype.hasOwnProperty.call(payload, "sourceUrl");
+    if (hasSourceUrl) {
+      input.sourceUrl = payload.sourceUrl ?? null;
+      optimisticData.sourceUrl = payload.sourceUrl ?? null;
     }
 
     commitUpdate({
       variables: {
-        input: payload,
+        input,
       },
       optimisticResponse: {
         updateLearningLog: {
-          log: {
-            id: payload.id,
-            title: payload.title ?? undefined,
-            reflection: payload.reflection ?? undefined,
-            tags: payload.tags ?? undefined,
-            timeSpent: payload.timeSpent ?? undefined,
-            sourceUrl: Object.prototype.hasOwnProperty.call(payload, "sourceUrl")
-              ? payload.sourceUrl ?? null
-              : undefined,
-            createdAt: undefined,
-          },
+          log: optimisticData,
         },
       },
-      onCompleted: () => {
+      onCompleted: (_response, errors) => {
+        const validationFields = extractValidationFields(errors);
+        if (validationFields) {
+          setEditErrors((prev) => ({
+            ...prev,
+            ...mergeFieldErrors(validationFields),
+          }));
+          setEditError("Please fix the highlighted fields.");
+          return;
+        }
         cancelEdit();
       },
       onError: (error) => {
@@ -363,6 +566,7 @@ export default function LogsView() {
       },
     });
   };
+
 
   const handleDelete = (logId: string) => {
     setDeleteError(null);
@@ -428,6 +632,162 @@ export default function LogsView() {
     );
   };
 
+  const handleCreateChange = (key: FormField) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    setCreateForm((prev) => ({ ...prev, [key]: value }));
+    if (createErrors[key]) {
+      setCreateErrors((prev) => ({ ...prev, [key]: undefined }));
+    }
+  };
+
+  const handleEditChange = (key: FormField) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    setEditForm((prev) => ({ ...prev, [key]: value }));
+    if (editErrors[key]) {
+      setEditErrors((prev) => ({ ...prev, [key]: undefined }));
+    }
+  };
+
+  useEffect(() => {
+    if (!pendingScrollId) {
+      return;
+    }
+    let frame: number;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+
+    const scrollToTarget = () => {
+      frame = requestAnimationFrame(() => {
+        const node = document.getElementById(`log-${pendingScrollId}`);
+        if (node) {
+          node.scrollIntoView({ behavior: "smooth", block: "start" });
+          node.classList.add("ring-2", "ring-primary-300", "ring-offset-2", "ring-offset-white");
+          timeout = setTimeout(() => {
+            node.classList.remove("ring-2", "ring-primary-300", "ring-offset-2", "ring-offset-white");
+          }, 1500);
+          setPendingScrollId(null);
+        } else if (attempts < 6) {
+          attempts += 1;
+          scrollToTarget();
+        } else {
+          setPendingScrollId(null);
+        }
+      });
+    };
+
+    scrollToTarget();
+
+    return () => {
+      cancelAnimationFrame(frame);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    };
+  }, [pendingScrollId]);
+
+  const renderCreateForm = (variant: "card" | "inline" = "card") => (
+    <form
+      className={`${variant === "card" ? "mt-4" : "mt-6"} grid gap-4 md:grid-cols-2`}
+      onSubmit={handleCreate}
+      noValidate
+    >
+      <div className="flex flex-col gap-2 md:col-span-2">
+        <label className="text-sm font-medium text-slate-700" htmlFor="create-title">
+          Title
+        </label>
+        <input
+          id="create-title"
+          ref={createTitleRef}
+          disabled={isCreateInFlight}
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+          placeholder="What did you learn?"
+          value={createForm.title}
+          onChange={handleCreateChange("title")}
+        />
+        {visibleCreateErrors.title ? <p className="text-xs text-red-600">{visibleCreateErrors.title}</p> : null}
+      </div>
+
+      <div className="flex flex-col gap-2 md:col-span-2">
+        <label className="text-sm font-medium text-slate-700" htmlFor="create-reflection">
+          Reflection
+        </label>
+        <textarea
+          id="create-reflection"
+          disabled={isCreateInFlight}
+          rows={4}
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+          value={createForm.reflection}
+          onChange={handleCreateChange("reflection")}
+          placeholder="Key takeaways, insights, or notes"
+        />
+        {visibleCreateErrors.reflection ? <p className="text-xs text-red-600">{visibleCreateErrors.reflection}</p> : null}
+      </div>
+
+      <div className="grid gap-4 md:col-span-2 md:grid-cols-3">
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium text-slate-700" htmlFor="create-tags">
+            Tags (CSV)
+          </label>
+          <input
+            id="create-tags"
+            disabled={isCreateInFlight}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+            value={createForm.tags}
+            onChange={handleCreateChange("tags")}
+            placeholder="react, ui"
+          />
+          {visibleCreateErrors.tags ? <p className="text-xs text-red-600">{visibleCreateErrors.tags}</p> : null}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium text-slate-700" htmlFor="create-time">
+            Time spent (minutes)
+          </label>
+          <input
+            id="create-time"
+            type="number"
+            min={1}
+            max={1440}
+            disabled={isCreateInFlight}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+            value={createForm.timeSpent}
+            onChange={handleCreateChange("timeSpent")}
+          />
+          {visibleCreateErrors.timeSpent ? <p className="text-xs text-red-600">{visibleCreateErrors.timeSpent}</p> : null}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium text-slate-700" htmlFor="create-source">
+            Source URL
+          </label>
+          <input
+            id="create-source"
+            disabled={isCreateInFlight}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+            value={createForm.sourceUrl}
+            onChange={handleCreateChange("sourceUrl")}
+            placeholder="https://"
+          />
+          {visibleCreateErrors.sourceUrl ? <p className="text-xs text-red-600">{visibleCreateErrors.sourceUrl}</p> : null}
+        </div>
+      </div>
+
+      {createError ? (
+        <p className="md:col-span-2 text-sm text-red-600">{createError}</p>
+      ) : null}
+
+      <div className="md:col-span-2 flex justify-end">
+        <button
+          type="submit"
+          disabled={isCreateInFlight || !isCreateFormValid}
+          className="rounded-full bg-primary-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-primary-300"
+        >
+          {isCreateInFlight ? "Saving…" : "Add log"}
+        </button>
+      </div>
+    </form>
+  );
+
   return (
     <div className="min-h-screen bg-app py-12">
       <div className="container mx-auto flex flex-col gap-12">
@@ -448,7 +808,7 @@ export default function LogsView() {
               </label>
               <input
                 id="filter-q"
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                 placeholder="Title or reflection"
                 value={filterForm.q}
                 onChange={(event) => setFilterForm((prev) => ({ ...prev, q: event.target.value }))}
@@ -460,7 +820,7 @@ export default function LogsView() {
               </label>
               <input
                 id="filter-tags-any"
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                 placeholder="react, ui"
                 value={filterForm.tagsAny}
                 onChange={(event) =>
@@ -474,7 +834,7 @@ export default function LogsView() {
               </label>
               <input
                 id="filter-tags-all"
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                 placeholder="testing, accessibility"
                 value={filterForm.tagsAll}
                 onChange={(event) =>
@@ -490,7 +850,7 @@ export default function LogsView() {
                 <input
                   id="filter-from"
                   type="date"
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                   value={filterForm.from}
                   onChange={(event) =>
                     setFilterForm((prev) => ({ ...prev, from: event.target.value }))
@@ -504,7 +864,7 @@ export default function LogsView() {
                 <input
                   id="filter-to"
                   type="date"
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                   value={filterForm.to}
                   onChange={(event) => setFilterForm((prev) => ({ ...prev, to: event.target.value }))}
                 />
@@ -528,129 +888,56 @@ export default function LogsView() {
           </form>
         </section>
 
-        <section className="glass-panel rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-slate-900">New log</h2>
-          <form className="mt-4 grid gap-4 md:grid-cols-2" onSubmit={handleCreate}>
-            <div className="flex flex-col gap-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700" htmlFor="create-title">
-                Title
-              </label>
-              <input
-                id="create-title"
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
-                placeholder="What did you learn?"
-                value={createForm.title}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, title: event.target.value }))}
-              />
-            </div>
-            <div className="flex flex-col gap-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700" htmlFor="create-reflection">
-                Reflection
-              </label>
-              <textarea
-                id="create-reflection"
-                rows={4}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
-                placeholder="Key takeaways, breakthroughs, or lingering questions"
-                value={createForm.reflection}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({ ...prev, reflection: event.target.value }))
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-slate-700" htmlFor="create-tags">
-                Tags
-              </label>
-              <input
-                id="create-tags"
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
-                placeholder="graphql, relay"
-                value={createForm.tags}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, tags: event.target.value }))}
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-slate-700" htmlFor="create-time">
-                Time spent (minutes)
-              </label>
-              <input
-                id="create-time"
-                type="number"
-                min={0}
-                max={1440}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
-                value={createForm.timeSpent}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({ ...prev, timeSpent: event.target.value }))
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700" htmlFor="create-source">
-                Source URL
-              </label>
-              <input
-                id="create-source"
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
-                placeholder="https://example.com/article"
-                value={createForm.sourceUrl}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({ ...prev, sourceUrl: event.target.value }))
-                }
-              />
-            </div>
-            {createError ? (
-              <p className="md:col-span-2 text-sm text-red-600">{createError}</p>
-            ) : null}
-            <div className="md:col-span-2 flex items-center justify-end">
-              <button
-                type="submit"
-                disabled={isCreateInFlight}
-                className="rounded-full bg-primary-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-primary-300"
-              >
-                {isCreateInFlight ? "Saving…" : "Add log"}
-              </button>
-            </div>
-          </form>
-        </section>
+        {logs.length > 0 ? (
+          <section className="glass-panel rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-slate-900">New log</h2>
+            {renderCreateForm()}
+          </section>
+        ) : null}
 
         <section className="flex flex-col gap-4">
           {deleteError ? <p className="text-sm text-red-600">{deleteError}</p> : null}
           {logs.length === 0 ? (
-            <div className="glass-panel rounded-xl p-10 text-center text-muted">
-              No logs yet—capture your first insight.
+            <div className="glass-panel rounded-xl p-10 text-left">
+              <h2 className="text-xl font-semibold text-slate-900">Start your first log</h2>
+              <p className="mt-2 text-sm text-muted">
+                Capture a reflection below and we'll keep it safe for future you.
+              </p>
+              {renderCreateForm("inline")}
             </div>
           ) : (
-            <ul className="grid gap-4">
-              {logs.map((logRef) => (
-                <LearningLogItem
-                  key={(logRef as { id: string }).id}
-                  logRef={logRef}
-                  editingId={editingId}
-                  editForm={editForm}
-                  setEditForm={setEditForm}
-                  onStartEdit={startEdit}
-                  onSubmitEdit={handleUpdate}
-                  onCancelEdit={cancelEdit}
-                  editError={editError}
-                  isUpdateInFlight={isUpdateInFlight}
-                  onDelete={handleDelete}
-                  isDeleteInFlight={isDeleteInFlight}
-                />
-              ))}
-            </ul>
+            <>
+              <ul className="grid gap-4">
+                {logs.map((logRef) => (
+                  <LearningLogItem
+                    key={(logRef as { id: string }).id}
+                    logRef={logRef}
+                    editingId={editingId}
+                    editForm={editForm}
+                    editErrors={visibleEditErrors}
+                    onEditChange={handleEditChange}
+                    onStartEdit={startEdit}
+                    onSubmitEdit={handleUpdate}
+                    onCancelEdit={cancelEdit}
+                    editError={editError}
+                    isUpdateInFlight={isUpdateInFlight}
+                    onDelete={handleDelete}
+                    isDeleteInFlight={isDeleteInFlight}
+                  />
+                ))}
+              </ul>
+              {hasNext ? (
+                <button
+                  type="button"
+                  onClick={() => loadNext(DEFAULT_PAGE_SIZE)}
+                  disabled={isLoadingNext}
+                  className="self-center rounded-full border border-primary-300 px-5 py-2 text-sm font-medium text-primary-600 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
+                >
+                  {isLoadingNext ? "Loading…" : "Load more"}
+                </button>
+              ) : null}
+            </>
           )}
-          {hasNext ? (
-            <button
-              type="button"
-              onClick={() => loadNext(DEFAULT_PAGE_SIZE)}
-              disabled={isLoadingNext}
-              className="self-center rounded-full border border-primary-300 px-5 py-2 text-sm font-medium text-primary-600 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
-            >
-              {isLoadingNext ? "Loading…" : "Load more"}
-            </button>
-          ) : null}
         </section>
       </div>
     </div>
@@ -661,7 +948,8 @@ type LearningLogItemProps = {
   logRef: learningLogFragments_learningLogItem$key;
   editingId: string | null;
   editForm: CreateFormState;
-  setEditForm: Dispatch<SetStateAction<CreateFormState>>;
+  editErrors: FieldErrors;
+  onEditChange: (key: FormField) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   onStartEdit: (log: LearningLogShape) => void;
   onSubmitEdit: (event: FormEvent<HTMLFormElement>) => void;
   onCancelEdit: () => void;
@@ -675,7 +963,8 @@ function LearningLogItem({
   logRef,
   editingId,
   editForm,
-  setEditForm,
+  editErrors,
+  onEditChange,
   onStartEdit,
   onSubmitEdit,
   onCancelEdit,
@@ -692,6 +981,15 @@ function LearningLogItem({
 
   const isEditing = editingId === log.id;
 
+  const updateValidation = useMemo(() => {
+    if (!isEditing) {
+      return null;
+    }
+    return learningLogUpdateSchema.safeParse(buildUpdateCandidate(log.id, editForm));
+  }, [isEditing, log.id, editForm]);
+
+  const isSaveDisabled = isUpdateInFlight || !(updateValidation?.success ?? false);
+
   const renderTags = () => (
     <div className="mt-3 flex flex-wrap gap-2">
       <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700">
@@ -707,37 +1005,35 @@ function LearningLogItem({
 
   if (isEditing) {
     return (
-      <li className="glass-panel rounded-xl p-6">
-        <form className="grid gap-4" onSubmit={onSubmitEdit}>
+      <li id={`log-${log.id}`} className="glass-panel rounded-xl p-6">
+        <form className="grid gap-4" onSubmit={onSubmitEdit} noValidate>
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium text-slate-700" htmlFor={`edit-title-${log.id}`}>
               Title
             </label>
             <input
               id={`edit-title-${log.id}`}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+              disabled={isUpdateInFlight}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
               value={editForm.title}
-              onChange={(event) =>
-                setEditForm((prev) => ({ ...prev, title: event.target.value }))
-              }
+              onChange={onEditChange("title")}
             />
+            {editErrors.title ? <p className="text-xs text-red-600">{editErrors.title}</p> : null}
           </div>
           <div className="flex flex-col gap-2">
-            <label
-              className="text-sm font-medium text-slate-700"
-              htmlFor={`edit-reflection-${log.id}`}
-            >
+            <label className="text-sm font-medium text-slate-700" htmlFor={`edit-reflection-${log.id}`}>
               Reflection
             </label>
             <textarea
               id={`edit-reflection-${log.id}`}
               rows={4}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+              disabled={isUpdateInFlight}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
               value={editForm.reflection}
-              onChange={(event) =>
-                setEditForm((prev) => ({ ...prev, reflection: event.target.value }))
-              }
+              onChange={onEditChange("reflection")}
+              placeholder="Key takeaways, insights, or notes"
             />
+            {editErrors.reflection ? <p className="text-xs text-red-600">{editErrors.reflection}</p> : null}
           </div>
           <div className="grid gap-4 md:grid-cols-3">
             <div className="flex flex-col gap-2">
@@ -746,12 +1042,12 @@ function LearningLogItem({
               </label>
               <input
                 id={`edit-tags-${log.id}`}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+                disabled={isUpdateInFlight}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                 value={editForm.tags}
-                onChange={(event) =>
-                  setEditForm((prev) => ({ ...prev, tags: event.target.value }))
-                }
+                onChange={onEditChange("tags")}
               />
+              {editErrors.tags ? <p className="text-xs text-red-600">{editErrors.tags}</p> : null}
             </div>
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-slate-700" htmlFor={`edit-time-${log.id}`}>
@@ -760,14 +1056,14 @@ function LearningLogItem({
               <input
                 id={`edit-time-${log.id}`}
                 type="number"
-                min={0}
+                min={1}
                 max={1440}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+                disabled={isUpdateInFlight}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                 value={editForm.timeSpent}
-                onChange={(event) =>
-                  setEditForm((prev) => ({ ...prev, timeSpent: event.target.value }))
-                }
+                onChange={onEditChange("timeSpent")}
               />
+              {editErrors.timeSpent ? <p className="text-xs text-red-600">{editErrors.timeSpent}</p> : null}
             </div>
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-slate-700" htmlFor={`edit-source-${log.id}`}>
@@ -775,19 +1071,19 @@ function LearningLogItem({
               </label>
               <input
                 id={`edit-source-${log.id}`}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none"
+                disabled={isUpdateInFlight}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                 value={editForm.sourceUrl}
-                onChange={(event) =>
-                  setEditForm((prev) => ({ ...prev, sourceUrl: event.target.value }))
-                }
+                onChange={onEditChange("sourceUrl")}
               />
+              {editErrors.sourceUrl ? <p className="text-xs text-red-600">{editErrors.sourceUrl}</p> : null}
             </div>
           </div>
           {editError ? <p className="text-sm text-red-600">{editError}</p> : null}
           <div className="flex items-center gap-3">
             <button
               type="submit"
-              disabled={isUpdateInFlight}
+              disabled={isSaveDisabled}
               className="rounded-full bg-primary-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-primary-300"
             >
               {isUpdateInFlight ? "Saving…" : "Save"}
@@ -806,7 +1102,7 @@ function LearningLogItem({
   }
 
   return (
-    <li className="glass-panel rounded-xl p-6">
+    <li id={`log-${log.id}`} className="glass-panel rounded-xl p-6">
       <div className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-4">
           <div>

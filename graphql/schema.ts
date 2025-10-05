@@ -4,7 +4,11 @@ import { createSchema } from "graphql-yoga";
 import type { LearningLog as LearningLogModel, Prisma, PrismaClient } from "@prisma/client";
 
 import { asLearningLogId, fromGlobalId } from "@/lib/globalId";
-import { learningLogCreateSchema, learningLogUpdateSchema } from "@/lib/validation";
+import {
+  learningLogCreateSchema,
+  learningLogUpdateSchema,
+  mapZodIssuesToFieldErrors,
+} from "@/lib/validation";
 
 type YogaContext = {
   prisma: PrismaClient;
@@ -96,18 +100,15 @@ const mapLearningLog = (log: LearningLogModel) => ({
   createdAt: log.createdAt.toISOString(),
 });
 
-const handleZodError = (error: unknown): never => {
-  if (error instanceof GraphQLError) {
-    throw error;
-  }
+type ValidationIssues = Parameters<typeof mapZodIssuesToFieldErrors>[0];
 
-  if (error && typeof error === "object" && "issues" in error) {
-    const { issues } = error as { issues: Array<{ message: string }> };
-    const message = issues.map((issue) => issue.message).join("; ");
-    throw new GraphQLError(message);
-  }
-
-  throw new GraphQLError("Invalid input");
+const throwValidationError = (issues: ValidationIssues): never => {
+  throw new GraphQLError("VALIDATION_ERROR", {
+    extensions: {
+      code: "VALIDATION_ERROR",
+      fields: mapZodIssuesToFieldErrors(issues),
+    },
+  });
 };
 
 export const schema = createSchema<YogaContext>({
@@ -190,64 +191,91 @@ export const schema = createSchema<YogaContext>({
         { input }: { input: Record<string, unknown> },
         { prisma },
       ) => {
-        try {
-          const payload = learningLogCreateSchema.parse(input);
+        const validation = learningLogCreateSchema.safeParse({
+          title: input.title,
+          reflection: input.reflection,
+          tags: input.tags,
+          timeSpent: input.timeSpent,
+          sourceUrl: input.sourceUrl ?? undefined,
+        });
 
-          const log = await prisma.learningLog.create({
-            data: {
-              title: payload.title,
-              reflection: payload.reflection,
-              tags: payload.tags,
-              timeSpent: payload.timeSpent,
-              sourceUrl: payload.sourceUrl ?? null,
-            },
-          });
-
-          return { log: mapLearningLog(log) };
-        } catch (error) {
-          handleZodError(error);
+        if (!validation.success) {
+          throwValidationError(validation.error.issues);
         }
+
+        const payload = validation.data;
+
+        const log = await prisma.learningLog.create({
+          data: {
+            title: payload.title,
+            reflection: payload.reflection,
+            tags: payload.tags,
+            timeSpent: payload.timeSpent,
+            sourceUrl: payload.sourceUrl ?? null,
+          },
+        });
+
+        return { log: mapLearningLog(log) };
       },
       updateLearningLog: async (
         _root,
         { input }: { input: Record<string, unknown> },
         { prisma },
       ) => {
-        try {
-          const payload = learningLogUpdateSchema.parse(input);
+        const updateInput: Record<string, unknown> = { id: input.id };
 
-          const { typename, id } = fromGlobalId(payload.id);
-          if (typename !== "LearningLog") {
-            throw new GraphQLError("Unsupported node type");
-          }
-
-          const data: Prisma.LearningLogUpdateInput = {};
-
-          if (payload.title !== undefined) {
-            data.title = payload.title;
-          }
-          if (payload.reflection !== undefined) {
-            data.reflection = payload.reflection;
-          }
-          if (payload.tags !== undefined) {
-            data.tags = payload.tags;
-          }
-          if (payload.timeSpent !== undefined) {
-            data.timeSpent = payload.timeSpent;
-          }
-          if (Object.prototype.hasOwnProperty.call(payload, "sourceUrl")) {
-            data.sourceUrl = payload.sourceUrl ?? null;
-          }
-
-          const log = await prisma.learningLog.update({
-            where: { id },
-            data,
-          });
-
-          return { log: mapLearningLog(log) };
-        } catch (error) {
-          handleZodError(error);
+        if (Object.prototype.hasOwnProperty.call(input, "title")) {
+          updateInput.title = input.title;
         }
+        if (Object.prototype.hasOwnProperty.call(input, "reflection")) {
+          updateInput.reflection = input.reflection;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "tags")) {
+          updateInput.tags = input.tags;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "timeSpent")) {
+          updateInput.timeSpent = input.timeSpent;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "sourceUrl")) {
+          updateInput.sourceUrl = input.sourceUrl ?? undefined;
+        }
+
+        const validation = learningLogUpdateSchema.safeParse(updateInput);
+
+        if (!validation.success) {
+          throwValidationError(validation.error.issues);
+        }
+
+        const payload = validation.data;
+        const { typename, id } = fromGlobalId(payload.id);
+        if (typename !== "LearningLog") {
+          throw new GraphQLError("Unsupported node type");
+        }
+
+        const data: Prisma.LearningLogUpdateInput = {};
+
+        if (payload.title !== undefined) {
+          data.title = payload.title;
+        }
+        if (payload.reflection !== undefined) {
+          data.reflection = payload.reflection;
+        }
+        if (payload.tags !== undefined) {
+          data.tags = payload.tags;
+        }
+        if (payload.timeSpent !== undefined) {
+          data.timeSpent = payload.timeSpent;
+        }
+        if (Object.prototype.hasOwnProperty.call(payload, "sourceUrl")) {
+          data.sourceUrl = payload.sourceUrl ?? null;
+        }
+
+        const log = await prisma.learningLog.update({
+          where: { id },
+          data,
+        });
+
+        return { log: mapLearningLog(log) };
       },
       deleteLearningLog: async (
         _root,
