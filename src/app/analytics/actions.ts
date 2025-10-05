@@ -10,12 +10,23 @@ type FetchLogsRangeArgs = {
 };
 
 export async function fetchLogsRange({ from, to }: FetchLogsRangeArgs): Promise<{ logs: Log[] }> {
+  const inclusiveTo = to
+    ? (() => {
+        const end = new Date(to);
+        if (Number.isNaN(end.getTime())) {
+          return null;
+        }
+        const nextDay = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+        return nextDay;
+      })()
+    : null;
+
   const where =
-    from || to
+    from || inclusiveTo
       ? {
           createdAt: {
             ...(from ? { gte: new Date(from) } : {}),
-            ...(to ? { lte: new Date(to) } : {}),
+            ...(inclusiveTo ? { lt: inclusiveTo } : {}),
           },
         }
       : {};
@@ -39,4 +50,3 @@ export async function fetchLogsRange({ from, to }: FetchLogsRangeArgs): Promise<
 
   return { logs };
 }
-

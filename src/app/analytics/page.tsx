@@ -72,20 +72,6 @@ export default async function AnalyticsPage({
         <header className="flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
             <h1 className="text-3xl font-semibold text-slate-900">Learning analytics</h1>
-            <div className="flex gap-3 text-sm text-primary-600">
-              <Link
-                href="/"
-                className="transition hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-              >
-                Home ↗
-              </Link>
-              <Link
-                href="/logs"
-                className="transition hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-              >
-                Logs ↗
-              </Link>
-            </div>
           </div>
 
           <nav className="flex gap-2">

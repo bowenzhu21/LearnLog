@@ -40,6 +40,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Home
             </Link>
             <Link
+              href="/logs/all"
+              className="text-white hover:text-primary-400 transition-colors duration-200"
+            >
+              Logs
+            </Link>
+            <Link
               href="/analytics"
               className="text-white hover:text-primary-400 transition-colors duration-200"
             >
