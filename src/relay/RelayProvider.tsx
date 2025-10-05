@@ -4,8 +4,27 @@ import { ReactNode, useMemo } from "react";
 import { RelayEnvironmentProvider } from "react-relay";
 import { Environment, Network, RecordSource, Store, type FetchFunction } from "relay-runtime";
 
+const resolveEndpoint = () => {
+  if (typeof window !== "undefined") {
+    return "/api/graphql";
+  }
+
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL ?? null;
+  if (explicit) {
+    return `${explicit.replace(/\/$/, "")}/api/graphql`;
+  }
+
+  const vercelUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null;
+  if (vercelUrl) {
+    return `${vercelUrl.replace(/\/$/, "")}/api/graphql`;
+  }
+
+  return "http://localhost:3000/api/graphql";
+};
+
 const fetchGraphQL: FetchFunction = async (operation, variables) => {
-  const response = await fetch("/api/graphql", {
+  const endpoint = resolveEndpoint();
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -15,6 +34,11 @@ const fetchGraphQL: FetchFunction = async (operation, variables) => {
       variables,
     }),
   });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}\n${message}`);
+  }
 
   const json = await response.json();
   if (json.errors) {
