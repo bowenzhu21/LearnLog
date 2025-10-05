@@ -1,57 +1,159 @@
-## Database Indexes
+# 🧠 LearnLog
 
-Indexes for pagination/search:
+Capture and reflect on what you learn every day.
+LearnLog is a modern learning journal app built with Next.js 15, TypeScript, Relay, and Prisma -- designed to help you document your insights, track your learning streaks, and visualize your progress over time.
 
-- createdAt, id
-- title
-- reflection
+⸻
 
-Migration name: add_learninglog_indexes
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## 🚀 Features
 
-## Getting Started
+### ✏️ Logging
+- Add reflections with title, tags, time spent, and optional source URL.
+- Edit or delete entries seamlessly.
+- Optimistic UI updates for instant feedback.
 
-First, run the development server:
+### 📚 Recent Reflections
+- Automatically shows your 5 most recent logs.
+- Updates instantly after a new log is added -- no refresh needed.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+### 📈 Analytics Dashboard
+- Visualizes total minutes, streaks, and daily trends.
+- Filter learning data by Last 7 days, 30 days, or All time.
+- Tag-based insights with "minutes by topic".
+- AI-generated weekly summaries.
+
+### ⚡ Tech Highlights
+- Next.js 15 (Turbopack) - Fast, reactive frontend.
+- Relay & GraphQL Yoga - Declarative data fetching and live updates.
+- Prisma + Postgres - Robust backend ORM with typed schema.
+- Zod validation - Secure, type-safe validation on client and server.
+- TailwindCSS + Glass UI - Clean, minimal design system.
+- Playwright tests - E2E validation of critical paths.
+
+⸻
+
+## 🧩 Architecture
+
+```
+learnlog/
+├── prisma/                # Prisma schema + migrations
+├── src/
+│   ├── app/
+│   │   ├── logs/          # CRUD & pagination
+│   │   ├── analytics/     # Summary, charts, and insights
+│   │   └── api/graphql/   # GraphQL Yoga endpoint
+│   ├── relay/             # Relay environment, queries, mutations
+│   ├── lib/               # Analytics utils & validation schemas
+│   └── components/        # Reusable UI pieces
+└── package.json
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+⸻
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## ⚙️ Setup
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Clone & install dependencies**
 
-## Learn More
+   ```bash
+   git clone https://github.com/yourusername/learnlog.git
+   cd learnlog
+   npm install
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+2. **Configure your environment**
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+   Create a `.env` file:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+   ```bash
+   DATABASE_URL="postgresql://user:password@localhost:5432/learnlog"
+   NEXT_PUBLIC_SITE_URL="http://localhost:3000"
+   ```
 
-## Deploy on Vercel
+3. **Setup the database**
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+   ```bash
+   npx prisma migrate dev
+   npx prisma db seed
+   ```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+4. **Generate Relay artifacts**
 
-## LearnLog Notes
+   ```bash
+   npm run relay
+   ```
 
-- Start the app locally with `npm run dev` and navigate to `/logs` for filtering and CRUD UI.
-- Regenerate Relay artifacts after modifying GraphQL by running `npm run relay` (creates files in `src/__generated__`).
-- Example GraphQL request:
-  ```bash
-  curl -X POST http://localhost:3000/api/graphql \
-    -H 'Content-Type: application/json' \
-    -d '{"query":"query Logs($first:Int!){ learningLogs(first:$first){ edges { node { id title } } } }","variables":{"first":5}}'
-  ```
-- The Neon connection string already enforces `sslmode=require`; Prisma reuses it via `.env` and writes the generated client to `src/generated/prisma` (ignored by git).
+5. **Run the dev server**
+
+   ```bash
+   npm run dev
+   ```
+
+   Then visit http://localhost:3000
+
+⸻
+
+## 🧪 Testing
+
+Run E2E tests (Playwright):
+
+```bash
+npm run test:e2e
+```
+
+Run lint & type checks:
+
+```bash
+npm run lint
+npm run typecheck
+```
+
+⸻
+
+## 📊 Analytics Calculation Details
+- **Streaks:** Computed from consecutive calendar days with >=1 log.
+- **Minutes by Tag:** Aggregates all logs with shared tags.
+- **Daily Graph:** Normalized min-max scale sparkline across range.
+- **Weekly Summary:** Generated dynamically via GPT for narrative insights.
+
+⸻
+
+## 🧱 Stack Summary
+
+| Layer     | Tech                                                       |
+|-----------|------------------------------------------------------------|
+| Frontend  | Next.js 15 (React Server Components), TypeScript, Tailwind |
+| Data      | Relay, GraphQL Yoga                                        |
+| Backend   | Prisma ORM + PostgreSQL                                    |
+| Validation| Zod                                                        |
+| Deployment| Vercel / Docker                                            |
+| Testing   | Playwright, ESLint, TypeScript                             |
+
+⸻
+
+## 🌈 Design Philosophy
+
+LearnLog follows a "calm productivity" aesthetic:
+light glass panels, soft shadows, and focused typography.
+Every action (add, edit, view) provides instant feedback and preserves flow.
+
+⸻
+
+## 🧭 Roadmap
+- Rich-text reflections (Markdown editor)
+- AI-powered tag suggestions
+- Mobile-friendly layout
+- Export to Notion or Obsidian
+- Smart streak notifications
+
+⸻
+
+## 💡 Author
+
+Bowen Zhu
+[LinkedIn](https://www.linkedin.com/) • [GitHub](https://github.com/)
+
+⸻
+
+## 🪄 License
+
+MIT License © 2025 Bowen Zhu
