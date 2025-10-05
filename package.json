@@ -3,15 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "postinstall": "prisma generate && npm run relay",
-    "test:e2e": "playwright test",
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint",
     "relay": "relay-compiler",
+    "vercel-build": "prisma migrate deploy && npm run relay && npm run build",
+    "postinstall": "prisma generate",
     "db:push": "prisma db push",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "test:e2e": "playwright test",
+    "lint": "eslint"
   },
   "dependencies": {
     "@prisma/client": "^6.16.3",
