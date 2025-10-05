@@ -12,7 +12,7 @@ const tagsSchema = z
   .min(1, "Add at least one tag")
   .max(20, "Limit to 20 tags");
 const timeSpentSchema = z
-  .number({ invalid_type_error: "Time spent must be a number" })
+  .number()
   .int("Time spent must be an integer")
   .min(1, "Time spent must be at least 1 minute")
   .max(1440, "Keep it under 24 hours");

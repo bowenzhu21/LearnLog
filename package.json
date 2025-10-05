@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "prisma generate && npm run relay",
+    "test:e2e": "playwright test",
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
@@ -13,6 +15,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.16.3",
+    "@sentry/nextjs": "^10.17.0",
     "autoprefixer": "^10.4.21",
     "babel-plugin-relay": "^20.1.1",
     "graphql": "^16.11.0",
@@ -28,6 +31,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.55.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

@@ -10,14 +10,14 @@ import {
 } from "react";
 import {
   ConnectionHandler,
-  ROOT_ID,
   graphql,
   useLazyLoadQuery,
   useMutation,
   usePaginationFragment,
   useFragment,
-  type PayloadError,
+  // type PayloadError,
 } from "react-relay";
+import { ROOT_ID } from "relay-runtime";
 import type { RecordSourceSelectorProxy } from "relay-runtime";
 
 import { learningLogsQuery } from "@/relay/queries/learningLogsQuery";
@@ -77,11 +77,13 @@ type LearningLogShape = {
 const FIELD_KEYS = ["title", "reflection", "tags", "timeSpent", "sourceUrl"] as const;
 type FormField = (typeof FIELD_KEYS)[number];
 type FieldErrors = Partial<Record<FormField, string>>;
-const extractValidationFields = (errors?: readonly PayloadError[] | null) => {
+const extractValidationFields = (errors?: readonly unknown[] | null) => {
   if (!errors || errors.length === 0) {
     return null;
   }
-  const validationError = errors.find((error) => error?.message === "VALIDATION_ERROR");
+  const validationError = Array.isArray(errors)
+    ? errors.find((error) => (error as { message?: string }).message === "VALIDATION_ERROR")
+    : undefined;
   if (!validationError) {
     return null;
   }
@@ -506,7 +508,18 @@ export default function LogsView() {
           return;
         }
 
-        const newId = response?.createLearningLog?.log?.id ?? optimisticId;
+        // Type guard for mutation response
+        let newId = optimisticId;
+        if (
+          response &&
+          typeof response === "object" &&
+          "createLearningLog" in response
+        ) {
+          const cl = (response as { createLearningLog?: { log?: { id?: string } } }).createLearningLog;
+          if (cl && typeof cl === "object" && "log" in cl && cl.log && typeof cl.log === "object" && "id" in cl.log) {
+            newId = cl.log.id ?? optimisticId;
+          }
+        }
         setPendingScrollId(newId);
         resetCreateForm();
       },
@@ -588,7 +601,7 @@ export default function LogsView() {
     }
     const hasSourceUrl = Object.prototype.hasOwnProperty.call(payload, "sourceUrl");
     if (hasSourceUrl) {
-      input.sourceUrl = payload.sourceUrl ?? null;
+  input.sourceUrl = payload.sourceUrl ?? undefined;
       optimisticData.sourceUrl = payload.sourceUrl ?? null;
     }
 
@@ -943,7 +956,7 @@ export default function LogsView() {
               <ul className="grid gap-4">
                 {logs.map((logRef) => (
                   <LearningLogItem
-                    key={(logRef as { id: string }).id}
+                    key={((logRef as unknown) as { id: string }).id}
                     logRef={logRef}
                     editingId={editingId}
                     editForm={editForm}
@@ -1014,8 +1027,9 @@ function LearningLogItem({
     if (!isEditing || !logId) {
       return null;
     }
-    return learningLogUpdateSchema.safeParse(buildUpdateCandidate(logId, editForm));
-  }, [isEditing, logId, editForm]);
+    // Only pass one argument to safeParse
+  return learningLogUpdateSchema.safeParse(buildUpdateCandidate(logId, editForm, log));
+  }, [isEditing, logId, editForm, log]);
 
   if (!log || !logId) {
     return null;

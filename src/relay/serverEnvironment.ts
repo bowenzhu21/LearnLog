@@ -10,10 +10,15 @@ import {
 
 const fetchGraphQL: FetchFunction = async (operation, variables) => {
   const requestHeaders = await headers();
-  const host =
-    requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
-  const protocol = host.includes("localhost") ? "http" : "https";
-  const endpoint = `${protocol}://${host}/api/graphql`;
+  let endpoint: string;
+  if (process.env.VERCEL_URL) {
+    endpoint = `https://${process.env.VERCEL_URL}/api/graphql`;
+  } else {
+    const host =
+      requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+    const protocol = host.includes("localhost") ? "http" : "https";
+    endpoint = `${protocol}://${host}/api/graphql`;
+  }
 
   const response = await fetch(endpoint, {
     method: "POST",

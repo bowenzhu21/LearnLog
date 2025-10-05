@@ -51,7 +51,9 @@ export default async function AnalyticsPage({
 }: {
   searchParams?: { range?: string; summary?: string };
 }) {
-  const rangeKey = clampRange(searchParams?.range);
+  // Next.js 15: await searchParams before using
+  const awaitedParams = searchParams ? await searchParams : {};
+  const rangeKey = clampRange(awaitedParams.range);
   const { from, to } = resolveRange(rangeKey);
 
   const { logs } = await fetchLogsRange({ from, to });
@@ -61,7 +63,7 @@ export default async function AnalyticsPage({
   const tags = minutesByTag(logs).slice(0, 10);
   const daily = groupDailyMinutes(logs);
   const sparklinePath = generateSparklinePath(daily);
-  const showSummary = searchParams?.summary === "1";
+  const showSummary = awaitedParams.summary === "1";
   const summary = showSummary && logs.length > 0 ? await generateWeeklySummary(logs) : null;
 
   return (
@@ -101,23 +103,23 @@ export default async function AnalyticsPage({
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div className="glass-panel rounded-xl p-6 shadow-soft">
-            <p className="text-xs uppercase tracking-wide text-muted">Current streak</p>
-            <p className="mt-2 text-3xl font-semibold text-slate-900">{streaks.current} days</p>
+            <p className="text-xs uppercase tracking-wide text-black">Current streak</p>
+            <p className="mt-2 text-3xl font-semibold text-black">{streaks.current} days</p>
           </div>
 
           <div className="glass-panel rounded-xl p-6 shadow-soft">
-            <p className="text-xs uppercase tracking-wide text-muted">Longest streak</p>
-            <p className="mt-2 text-3xl font-semibold text-slate-900">{streaks.longest} days</p>
+            <p className="text-xs uppercase tracking-wide text-black">Longest streak</p>
+            <p className="mt-2 text-3xl font-semibold text-black">{streaks.longest} days</p>
           </div>
 
           <div className="glass-panel rounded-xl p-6 shadow-soft">
-            <p className="text-xs uppercase tracking-wide text-muted">Total minutes</p>
-            <p className="mt-2 text-3xl font-semibold text-slate-900">{totalMinutes}</p>
+            <p className="text-xs uppercase tracking-wide text-black">Total minutes</p>
+            <p className="mt-2 text-3xl font-semibold text-black">{totalMinutes}</p>
           </div>
 
           <div className="glass-panel rounded-xl p-6 shadow-soft">
-            <p className="text-xs uppercase tracking-wide text-muted">Entries</p>
-            <p className="mt-2 text-3xl font-semibold text-slate-900">{totalEntries}</p>
+            <p className="text-xs uppercase tracking-wide text-black">Entries</p>
+            <p className="mt-2 text-3xl font-semibold text-black">{totalEntries}</p>
           </div>
         </section>
 

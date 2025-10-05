@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+// ...existing code...
 import { useEffect, useState } from "react";
 
 type RecentLog = {
@@ -20,16 +20,32 @@ const truncate = (value: string, length: number) => {
   return `${value.slice(0, length).trim()}…`;
 };
 
+// ✅ FIX: always resolve absolute /api/graphql path
+const getGraphQLEndpoint = () => {
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/api/graphql`;
+  }
+
+  let siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!siteUrl && process.env.VERCEL_URL) {
+    siteUrl = `https://${process.env.VERCEL_URL}`;
+  }
+  if (!siteUrl) {
+    siteUrl = "http://localhost:3000";
+  }
+  return `${siteUrl}/api/graphql`;
+};
+
 export default function RecentLogs() {
   const [logs, setLogs] = useState<RecentLog[]>([]);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const fetchRecentLogs = async () => {
-    setStatus('loading');
+  async function fetchRecentLogs() {
+    setStatus("loading");
     setErrorMsg(null);
     try {
-      const res = await fetch("/api/graphql", {
+      const res = await fetch(getGraphQLEndpoint(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -52,40 +68,44 @@ export default function RecentLogs() {
         }),
         cache: "no-store",
       });
+
       if (!res.ok) throw new Error(`Network error: ${res.status}`);
-  const json: { data?: RecentLogsData; errors?: unknown } = await res.json();
+
+      const json: { data?: RecentLogsData; errors?: unknown } = await res.json();
       if (json.errors) throw new Error("GraphQL error");
+
       const edges = json?.data?.learningLogs?.edges ?? [];
       setLogs(edges.map((e) => e.node));
-      setStatus('success');
+      setStatus("success");
     } catch (err: unknown) {
-      setStatus('error');
-      setErrorMsg(err instanceof Error ? err.message : 'Unknown error');
+      setStatus("error");
+      setErrorMsg(err instanceof Error ? err.message : "Unknown error");
     }
-  };
+  }
 
   useEffect(() => {
     fetchRecentLogs();
-    const h = (e: CustomEvent<RecentLog>) => {
-      setLogs((prev) => [e.detail, ...prev].slice(0, 5));
+
+    const h = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const log = customEvent.detail;
+      if (log && log.id && log.title && log.reflection && log.tags && log.createdAt) {
+        setLogs((prev) => [log, ...prev].slice(0, 5));
+      }
     };
-    window.addEventListener('learnlog:created', h as EventListener);
-    return () => window.removeEventListener('learnlog:created', h as EventListener);
+
+    window.addEventListener("learnlog:created", h);
+    return () => window.removeEventListener("learnlog:created", h);
   }, []);
 
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-slate-900">Recent reflections</h2>
-        <Link
-          href="/logs"
-          className="text-sm font-medium text-primary-600 transition hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-          data-testid="recent-logs-view-all"
-        >
-          View all →
-        </Link>
+      <div className="flex items-center">
+        <h2 className="text-xl font-semibold text-white">Recent reflections</h2>
       </div>
-      {status === 'loading' && (
+
+      {/* Loading state */}
+      {status === "loading" && (
         <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[...Array(3)].map((_, i) => (
             <li key={i} className="glass-panel rounded-xl p-5 shadow-soft animate-pulse bg-slate-100">
@@ -96,7 +116,9 @@ export default function RecentLogs() {
           ))}
         </ul>
       )}
-      {status === 'error' && (
+
+      {/* Error state */}
+      {status === "error" && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex flex-col gap-2">
           <span>Could not load recent logs: {errorMsg}</span>
           <button
@@ -107,19 +129,20 @@ export default function RecentLogs() {
           </button>
         </div>
       )}
-      {status === 'success' && logs.length === 0 && (
+
+      {/* Empty state */}
+      {status === "success" && logs.length === 0 && (
         <div className="rounded-lg border border-slate-200 bg-white/80 p-4 text-sm text-slate-700">
           No recent reflections yet.
         </div>
       )}
-      {status === 'success' && logs.length > 0 && (
+
+      {/* Logs grid */}
+      {status === "success" && logs.length > 0 && (
         <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {logs.map((log) => (
             <li key={log.id} className="glass-panel rounded-xl p-5 shadow-soft">
-              <Link
-                href={`/logs/${log.id}`}
-                className="block focus:outline-none focus:ring-2 rounded-lg"
-              >
+              <span className="block focus:outline-none focus:ring-2 rounded-lg cursor-default">
                 <article className="flex flex-col gap-3">
                   <div className="flex items-start justify-between gap-3">
                     <span className="text-base font-semibold text-slate-900 transition hover:text-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white line-clamp-2">
@@ -140,7 +163,7 @@ export default function RecentLogs() {
                     ))}
                   </div>
                 </article>
-              </Link>
+              </span>
             </li>
           ))}
         </ul>

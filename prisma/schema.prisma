@@ -18,4 +18,8 @@ model LearningLog {
   timeSpent   Int
   sourceUrl   String?
   createdAt   DateTime @default(now())
+
+  @@index([createdAt, id], map: "LearningLog_createdAt_id_idx")
+  @@index([title], map: "LearningLog_title_idx")
+  @@index([reflection], map: "LearningLog_reflection_idx")
 }

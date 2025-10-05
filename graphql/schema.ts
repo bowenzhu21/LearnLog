@@ -115,7 +115,7 @@ export const schema = createSchema<YogaContext>({
   typeDefs,
   resolvers: {
     Node: {
-      __resolveType: (obj) => {
+  __resolveType: (obj: unknown) => {
         if (obj && typeof obj === "object" && "title" in obj) {
           return "LearningLog";
         }
@@ -204,7 +204,9 @@ export const schema = createSchema<YogaContext>({
         }
 
         const payload = validation.data;
-
+        if (!payload) {
+          throw new Error("Validation payload missing");
+        }
         const log = await prisma.learningLog.create({
           data: {
             title: payload.title,
@@ -247,6 +249,9 @@ export const schema = createSchema<YogaContext>({
         }
 
         const payload = validation.data;
+        if (!payload) {
+          throw new Error("Validation payload missing");
+        }
         const { typename, id } = fromGlobalId(payload.id);
         if (typename !== "LearningLog") {
           throw new GraphQLError("Unsupported node type");

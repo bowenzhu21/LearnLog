@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+// ...existing code...
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "react-relay";
 import type { PayloadError } from "relay-runtime";
@@ -71,19 +71,34 @@ const mergeFieldErrors = (fields: Record<string, string>): FieldErrors => {
   return next;
 };
 
-const buildCreateCandidate = (state: QuickAddFormState) => {
-  const tags = parseCsv(state.tags);
-  const title = state.title.trim();
-  const reflection = state.reflection.trim();
+const MAX_TITLE_LEN = 100;
+const MAX_REFLECTION_LEN = 1000;
+const MAX_TAGS = 8;
+const URL_REGEX = /^https?:\/\/[\w.-]+(?:\.[\w\.-]+)+(?:[\w\-\._~:/?#[\]@!$&'()*+,;=.]+)?$/i;
+
+const buildCreateCandidate = (state: QuickAddFormState): {
+  title: string;
+  reflection: string;
+  tags: string[];
+  timeSpent: number;
+  sourceUrl?: string;
+} => {
+  const tags = parseCsv(state.tags).slice(0, MAX_TAGS);
+  const title = state.title.trim().slice(0, MAX_TITLE_LEN);
+  const reflection = state.reflection.trim().slice(0, MAX_REFLECTION_LEN);
   const timeInput = state.timeSpent.trim();
-  const sourceUrl = state.sourceUrl.trim();
+  // Coerce minutes safely
+  const minutes = Math.max(1, Math.min(1440, Number.parseInt(timeInput, 10) || 0));
+  let sourceUrl: string | undefined = state.sourceUrl.trim();
+  if (sourceUrl === "") sourceUrl = undefined;
+  else if (sourceUrl && !URL_REGEX.test(sourceUrl)) sourceUrl = sourceUrl; // will be flagged as error below
 
   return {
     title,
     reflection,
     tags,
-    timeSpent: timeInput === "" ? Number.NaN : Number(timeInput),
-    sourceUrl: sourceUrl === "" ? undefined : sourceUrl,
+    timeSpent: minutes,
+    sourceUrl,
   };
 };
 
@@ -97,6 +112,7 @@ export default function QuickAddCard() {
   const [status, setStatus] = useState<"idle" | "success">("idle");
   const [lastSavedTitle, setLastSavedTitle] = useState<string>("");
   const titleRef = useRef<HTMLInputElement>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isInFlight) {
@@ -116,17 +132,30 @@ export default function QuickAddCard() {
     }
   };
 
+  // Inline client-side URL validation
+  const urlError = useMemo(() => {
+    const url = form.sourceUrl.trim();
+    if (url && !URL_REGEX.test(url)) {
+      return "Enter a valid URL (https://...)";
+    }
+    return undefined;
+  }, [form.sourceUrl]);
+
   const createValidation = useMemo(
     () => learningLogCreateSchema.safeParse(buildCreateCandidate(form)),
     [form],
   );
 
   const derivedFieldErrors = useMemo(() => {
-    if (createValidation.success) {
-      return {} as FieldErrors;
+    const errors: FieldErrors = {};
+    if (!createValidation.success) {
+      Object.assign(errors, mergeFieldErrors(mapZodIssuesToFieldErrors(createValidation.error.issues)));
     }
-    return mergeFieldErrors(mapZodIssuesToFieldErrors(createValidation.error.issues));
-  }, [createValidation]);
+    if (urlError) {
+      errors.sourceUrl = urlError;
+    }
+    return errors;
+  }, [createValidation, urlError]);
 
   const visibleFieldErrors = useMemo(
     () => ({
@@ -182,7 +211,7 @@ export default function QuickAddCard() {
           },
         },
       },
-  onCompleted: (response: unknown, errors: readonly PayloadError[] | null) => {
+      onCompleted: (response: unknown, errors: readonly PayloadError[] | null) => {
         const validationFields = extractValidationFields(errors);
         if (validationFields) {
           applyFieldErrors(validationFields);
@@ -197,10 +226,20 @@ export default function QuickAddCard() {
         setForm(initialFormState);
         // Optimistically update RecentLogs
         if (resp.createLearningLog?.log) {
+          // Only send required fields for RecentLog
+          const { id, title, reflection, tags, createdAt } = resp.createLearningLog.log;
           window.dispatchEvent(
-            new CustomEvent('learnlog:created', { detail: resp.createLearningLog.log })
+            new CustomEvent('learnlog:created', {
+              detail: { id, title, reflection, tags, createdAt }
+            })
           );
         }
+        // Show toast and refocus Title
+        setToast("Saved!");
+        if (titleRef.current) {
+          titleRef.current.focus();
+        }
+        setTimeout(() => setToast(null), 2000);
       },
       onError: (error) => {
         setSubmitError(error.message);
@@ -219,140 +258,144 @@ export default function QuickAddCard() {
   };
 
   return (
-    <section className="glass-panel mx-auto max-w-2xl rounded-xl p-8">
-      <h2 className="text-2xl font-semibold text-slate-900">Quick Add</h2>
-      <p className="mt-2 text-sm text-muted">
-        Capture a new learning log without leaving the landing page.
-      </p>
+    <>
+      <section className="glass-panel mx-auto max-w-2xl rounded-xl p-8">
+        <h2 className="text-2xl font-semibold text-black">Quick Add</h2>
+        <p className="mt-2 text-sm text-muted">
+        </p>
 
-      {status === "success" ? (
-        <div className="mt-6 flex flex-col gap-4">
-          <div className="rounded-lg border border-primary-200 bg-white/80 p-4 text-sm text-slate-700">
-            <p>
-              <span className="font-medium text-primary-700">Success!</span> Your log
-              {lastSavedTitle ? ` “${lastSavedTitle}”` : ""} was saved.
-            </p>
+        {status === "success" ? (
+          <div className="mt-6 flex flex-col gap-4">
+            <div className="rounded-lg border border-primary-200 bg-white/80 p-4 text-sm text-black">
+              <p>
+                <span className="font-medium text-primary-700">Success!</span> Your log
+                {lastSavedTitle ? ` “${lastSavedTitle}”` : ""} was saved.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={resetForm}
+                className="rounded-full border border-primary-300 px-5 py-2 text-sm font-medium text-primary-600 transition hover:border-primary-400 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              >
+                Add another
+              </button>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={resetForm}
-              className="rounded-full border border-primary-300 px-5 py-2 text-sm font-medium text-primary-600 transition hover:border-primary-400 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-            >
-              Add another
-            </button>
-            <Link
-              href="/logs"
-              className="rounded-full bg-primary-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-            >
-              View in Logs ↗
-            </Link>
-          </div>
+        ) : (
+          <form className="mt-6 grid gap-4" onSubmit={handleSubmit} noValidate>
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-black" htmlFor="quick-title">
+                Title
+              </label>
+              <input
+                id="quick-title"
+                ref={titleRef}
+                disabled={isInFlight}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                value={form.title}
+                onChange={handleChange("title")}
+                placeholder="What did you learn?"
+              />
+              {visibleFieldErrors.title ? <p className="text-xs text-red-600">{visibleFieldErrors.title}</p> : null}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-black" htmlFor="quick-reflection">
+                Reflection
+              </label>
+              <textarea
+                id="quick-reflection"
+                disabled={isInFlight}
+                rows={4}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                value={form.reflection}
+                onChange={handleChange("reflection")}
+                placeholder="Key takeaways, insights, or notes"
+              />
+              {visibleFieldErrors.reflection ? (
+                <p className="text-xs text-red-600">{visibleFieldErrors.reflection}</p>
+              ) : null}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-black" htmlFor="quick-tags">
+                  Tags
+                </label>
+                <input
+                  id="quick-tags"
+                  disabled={isInFlight}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                  value={form.tags}
+                  onChange={handleChange("tags")}
+                  placeholder="react, ui"
+                />
+                {visibleFieldErrors.tags ? <p className="text-xs text-red-600">{visibleFieldErrors.tags}</p> : null}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-black" htmlFor="quick-time">
+                  Time spent (minutes)
+                </label>
+                <input
+                  id="quick-time"
+                  type="number"
+                  min={1}
+                  max={1440}
+                  disabled={isInFlight}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                  value={form.timeSpent}
+                  onChange={handleChange("timeSpent")}
+                />
+                {visibleFieldErrors.timeSpent ? (
+                  <p className="text-xs text-red-600">{visibleFieldErrors.timeSpent}</p>
+                ) : null}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-black" htmlFor="quick-source">
+                  Source URL
+                </label>
+                <input
+                  id="quick-source"
+                  disabled={isInFlight}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                  value={form.sourceUrl}
+                  onChange={handleChange("sourceUrl")}
+                  placeholder="https://"
+                />
+                {visibleFieldErrors.sourceUrl ? (
+                  <p className="text-xs text-red-600">{visibleFieldErrors.sourceUrl}</p>
+                ) : null}
+              </div>
+            </div>
+
+            {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                data-testid="quickadd-submit"
+                disabled={isSubmitDisabled}
+                aria-busy={isInFlight}
+                className="rounded-full bg-primary-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-primary-300"
+              >
+                {isInFlight ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+      {toast && (
+        <div
+          className="fixed bottom-6 right-6 z-50 rounded-lg bg-primary-700 px-4 py-2 text-sm text-white shadow-lg animate-fadein"
+          role="status"
+          aria-live="polite"
+        >
+          {toast}
         </div>
-      ) : (
-        <form className="mt-6 grid gap-4" onSubmit={handleSubmit} noValidate>
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-slate-700" htmlFor="quick-title">
-              Title
-            </label>
-            <input
-              id="quick-title"
-              ref={titleRef}
-              disabled={isInFlight}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
-              value={form.title}
-              onChange={handleChange("title")}
-              placeholder="What did you learn?"
-            />
-            {visibleFieldErrors.title ? <p className="text-xs text-red-600">{visibleFieldErrors.title}</p> : null}
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-slate-700" htmlFor="quick-reflection">
-              Reflection
-            </label>
-            <textarea
-              id="quick-reflection"
-              disabled={isInFlight}
-              rows={4}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
-              value={form.reflection}
-              onChange={handleChange("reflection")}
-              placeholder="Key takeaways, insights, or notes"
-            />
-            {visibleFieldErrors.reflection ? (
-              <p className="text-xs text-red-600">{visibleFieldErrors.reflection}</p>
-            ) : null}
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-slate-700" htmlFor="quick-tags">
-                Tags (CSV)
-              </label>
-              <input
-                id="quick-tags"
-                disabled={isInFlight}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
-                value={form.tags}
-                onChange={handleChange("tags")}
-                placeholder="react, ui"
-              />
-              {visibleFieldErrors.tags ? <p className="text-xs text-red-600">{visibleFieldErrors.tags}</p> : null}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-slate-700" htmlFor="quick-time">
-                Time spent (minutes)
-              </label>
-              <input
-                id="quick-time"
-                type="number"
-                min={1}
-                max={1440}
-                disabled={isInFlight}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
-                value={form.timeSpent}
-                onChange={handleChange("timeSpent")}
-              />
-              {visibleFieldErrors.timeSpent ? (
-                <p className="text-xs text-red-600">{visibleFieldErrors.timeSpent}</p>
-              ) : null}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-slate-700" htmlFor="quick-source">
-                Source URL
-              </label>
-              <input
-                id="quick-source"
-                disabled={isInFlight}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
-                value={form.sourceUrl}
-                onChange={handleChange("sourceUrl")}
-                placeholder="https://"
-              />
-              {visibleFieldErrors.sourceUrl ? (
-                <p className="text-xs text-red-600">{visibleFieldErrors.sourceUrl}</p>
-              ) : null}
-            </div>
-          </div>
-
-          {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
-
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              data-testid="quickadd-submit"
-              disabled={isSubmitDisabled}
-              aria-busy={isInFlight}
-              className="rounded-full bg-primary-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-primary-300"
-            >
-              {isInFlight ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </form>
       )}
-    </section>
+    </>
   );
 }
