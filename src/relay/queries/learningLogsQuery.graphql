@@ -1,0 +1,18 @@
+# source: learningLogsQuery
+query learningLogsQuery($first: Int!, $after: String, $filter: LearningLogFilter) {
+  learningLogs(first: $first, after: $after, filter: $filter) {
+    edges {
+      node {
+        id
+        ...learningLogFragments_learningLogItem
+      }
+      cursor
+    }
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+  }
+}

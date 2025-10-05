@@ -1,0 +1,9 @@
+# source: updateLearningLogMutation
+mutation updateLearningLogMutation($input: UpdateLearningLogInput!) {
+  updateLearningLog(input: $input) {
+    log {
+      id
+      ...learningLogFragments_learningLogItem
+    }
+  }
+}

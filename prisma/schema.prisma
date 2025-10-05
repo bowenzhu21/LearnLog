@@ -1,0 +1,21 @@
+// Prisma schema for LearnLog
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model LearningLog {
+  id          String   @id @default(cuid())
+  title       String
+  reflection  String
+  tags        String[]
+  timeSpent   Int
+  sourceUrl   String?
+  createdAt   DateTime @default(now())
+}

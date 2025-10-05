@@ -1,0 +1,72 @@
+schema {
+  query: Query
+  mutation: Mutation
+}
+
+interface Node {
+  id: ID!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type LearningLog implements Node {
+  id: ID!
+  title: String!
+  reflection: String!
+  tags: [String!]!
+  timeSpent: Int!
+  sourceUrl: String
+  createdAt: String!
+}
+
+type LearningLogEdge { node: LearningLog! cursor: String! }
+type LearningLogConnection {
+  edges: [LearningLogEdge!]!
+  pageInfo: PageInfo!
+}
+
+input LearningLogFilter {
+  tagsAny: [String!]
+  tagsAll: [String!]
+  q: String
+  from: String
+  to: String
+}
+
+type Query {
+  node(id: ID!): Node
+  learningLogs(first: Int!, after: String, filter: LearningLogFilter): LearningLogConnection!
+}
+
+input CreateLearningLogInput {
+  title: String!
+  reflection: String!
+  tags: [String!]!
+  timeSpent: Int!
+  sourceUrl: String
+}
+type CreateLearningLogPayload { log: LearningLog! }
+
+input UpdateLearningLogInput {
+  id: ID!
+  title: String
+  reflection: String
+  tags: [String!]
+  timeSpent: Int
+  sourceUrl: String
+}
+type UpdateLearningLogPayload { log: LearningLog! }
+
+input DeleteLearningLogInput { id: ID! }
+type DeleteLearningLogPayload { deletedId: ID! }
+
+type Mutation {
+  createLearningLog(input: CreateLearningLogInput!): CreateLearningLogPayload!
+  updateLearningLog(input: UpdateLearningLogInput!): UpdateLearningLogPayload!
+  deleteLearningLog(input: DeleteLearningLogInput!): DeleteLearningLogPayload!
+}

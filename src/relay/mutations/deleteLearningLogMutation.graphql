@@ -1,0 +1,6 @@
+# source: deleteLearningLogMutation
+mutation deleteLearningLogMutation($input: DeleteLearningLogInput!) {
+  deleteLearningLog(input: $input) {
+    deletedId
+  }
+}
