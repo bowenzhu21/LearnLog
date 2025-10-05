@@ -245,6 +245,52 @@ const buildFilterInput = (state: FilterFormState): LearningLogFilterInput | null
   return Object.keys(filter).length > 0 ? filter : null;
 };
 
+const areArraysEqual = (a?: readonly string[], b?: readonly string[]) => {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return !a && !b;
+  }
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const areFiltersEqual = (
+  a: LearningLogFilterInput | null,
+  b: LearningLogFilterInput | null,
+) => {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return a === b;
+  }
+  if ((a.q ?? null) !== (b.q ?? null)) {
+    return false;
+  }
+  if ((a.from ?? null) !== (b.from ?? null)) {
+    return false;
+  }
+  if ((a.to ?? null) !== (b.to ?? null)) {
+    return false;
+  }
+  if (!areArraysEqual(a.tagsAny, b.tagsAny)) {
+    return false;
+  }
+  if (!areArraysEqual(a.tagsAll, b.tagsAll)) {
+    return false;
+  }
+  return true;
+};
+
 const CONNECTION_KEY = "LogsView_learningLogs";
 
 const getConnectionFilters = (filter: LearningLogFilterInput | null) => ({
@@ -255,7 +301,9 @@ const createTempId = () => `client:new-log:${Date.now()}`;
 
 export default function LogsView() {
   const [filterForm, setFilterForm] = useState<FilterFormState>(initialFilterState);
-  const [activeFilter, setActiveFilter] = useState<LearningLogFilterInput | null>(null);
+  const [pendingFilter, setPendingFilter] = useState<LearningLogFilterInput | null>(null);
+  const [debouncedFilter, setDebouncedFilter] = useState<LearningLogFilterInput | null>(null);
+  const [appliedFilter, setAppliedFilter] = useState<LearningLogFilterInput | null>(null);
   const [createForm, setCreateForm] = useState<CreateFormState>(initialCreateState);
   const [createError, setCreateError] = useState<MutationError>(null);
   const [createErrors, setCreateErrors] = useState<FieldErrors>({});
@@ -268,11 +316,20 @@ export default function LogsView() {
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
 
   const createTitleRef = useRef<HTMLInputElement>(null);
+  const lastSentFilterRef = useRef<LearningLogFilterInput | null>(null);
+  const skipStrictEffectRef = useRef(process.env.NODE_ENV !== "production");
 
-  const baseData = useLazyLoadQuery<LearningLogsQueryType>(learningLogsQuery, {
-    first: DEFAULT_PAGE_SIZE,
-    filter: null,
-  });
+  const defaultFilter = useMemo(() => null as LearningLogFilterInput | null, []);
+  const queryVariables = useMemo(
+    () => ({
+      first: DEFAULT_PAGE_SIZE,
+      after: null,
+      filter: appliedFilter ?? defaultFilter,
+    }),
+    [appliedFilter, defaultFilter],
+  );
+
+  const baseData = useLazyLoadQuery<LearningLogsQueryType>(learningLogsQuery, queryVariables);
 
   const { data, hasNext, isLoadingNext, loadNext, refetch } = usePaginationFragment<
     LogsViewPaginationQuery,
@@ -288,7 +345,68 @@ export default function LogsView() {
     return connectionEdges.map((edge) => edge?.node).filter(Boolean) as learningLogFragments_learningLogItem$key[];
   }, [data.learningLogs?.edges]);
 
-  const connectionFilters = useMemo(() => getConnectionFilters(activeFilter), [activeFilter]);
+  const connectionFilters = useMemo(() => getConnectionFilters(appliedFilter), [appliedFilter]);
+
+  useEffect(() => {
+    const nextFilter = buildFilterInput(filterForm);
+    setPendingFilter((prev) => (areFiltersEqual(prev, nextFilter) ? prev : nextFilter));
+  }, [filterForm]);
+
+  useEffect(() => {
+    if (areFiltersEqual(pendingFilter, debouncedFilter)) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setDebouncedFilter((prev) => (areFiltersEqual(prev, pendingFilter) ? prev : pendingFilter));
+    }, 300);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [pendingFilter, debouncedFilter]);
+
+  useEffect(() => {
+    if (skipStrictEffectRef.current) {
+      skipStrictEffectRef.current = false;
+      lastSentFilterRef.current = appliedFilter;
+      return;
+    }
+
+    if (areFiltersEqual(debouncedFilter, appliedFilter)) {
+      lastSentFilterRef.current = debouncedFilter;
+      return;
+    }
+
+    if (areFiltersEqual(debouncedFilter, lastSentFilterRef.current)) {
+      return;
+    }
+
+    const targetFilter = debouncedFilter;
+    const previousFilter = appliedFilter;
+
+    lastSentFilterRef.current = targetFilter;
+
+    const disposable = refetch(
+      {
+        first: DEFAULT_PAGE_SIZE,
+        after: null,
+        filter: targetFilter ?? null,
+      },
+      {
+        fetchPolicy: "network-only",
+        onComplete: (error) => {
+          if (!error) {
+            setAppliedFilter(targetFilter);
+          } else {
+            lastSentFilterRef.current = previousFilter;
+          }
+        },
+      },
+    );
+
+    return () => {
+      disposable?.dispose();
+    };
+  }, [debouncedFilter, appliedFilter, refetch]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       createTitleRef.current?.focus();
@@ -608,28 +726,14 @@ export default function LogsView() {
   const applyFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextFilter = buildFilterInput(filterForm);
-    setActiveFilter(nextFilter);
-    refetch(
-      {
-        first: DEFAULT_PAGE_SIZE,
-        after: null,
-        filter: nextFilter ?? null,
-      },
-      { fetchPolicy: "network-only" },
-    );
+    setPendingFilter((prev) => (areFiltersEqual(prev, nextFilter) ? prev : nextFilter));
+    setDebouncedFilter((prev) => (areFiltersEqual(prev, nextFilter) ? prev : nextFilter));
   };
 
   const resetFilters = () => {
     setFilterForm(initialFilterState);
-    setActiveFilter(null);
-    refetch(
-      {
-        first: DEFAULT_PAGE_SIZE,
-        after: null,
-        filter: null,
-      },
-      { fetchPolicy: "store-and-network" },
-    );
+    setPendingFilter(null);
+    setDebouncedFilter((prev) => (prev === null ? prev : null));
   };
 
   const handleCreateChange = (key: FormField) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -901,7 +1005,7 @@ export default function LogsView() {
             <div className="glass-panel rounded-xl p-10 text-left">
               <h2 className="text-xl font-semibold text-slate-900">Start your first log</h2>
               <p className="mt-2 text-sm text-muted">
-                Capture a reflection below and we'll keep it safe for future you.
+                Capture a reflection below and we&apos;ll keep it safe for future you.
               </p>
               {renderCreateForm("inline")}
             </div>
@@ -974,19 +1078,19 @@ function LearningLogItem({
   isDeleteInFlight,
 }: LearningLogItemProps) {
   const log = useFragment(learningLogItemFragment, logRef) as LearningLogShape | null;
-
-  if (!log) {
-    return null;
-  }
-
-  const isEditing = editingId === log.id;
+  const logId = log?.id ?? null;
+  const isEditing = logId !== null && editingId === logId;
 
   const updateValidation = useMemo(() => {
-    if (!isEditing) {
+    if (!isEditing || !logId) {
       return null;
     }
-    return learningLogUpdateSchema.safeParse(buildUpdateCandidate(log.id, editForm));
-  }, [isEditing, log.id, editForm]);
+    return learningLogUpdateSchema.safeParse(buildUpdateCandidate(logId, editForm));
+  }, [isEditing, logId, editForm]);
+
+  if (!log || !logId) {
+    return null;
+  }
 
   const isSaveDisabled = isUpdateInFlight || !(updateValidation?.success ?? false);
 

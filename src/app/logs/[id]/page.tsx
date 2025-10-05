@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { graphql, fetchQuery } from "react-relay";
+import { graphql } from "react-relay";
+import { fetchQuery } from "relay-runtime";
 
 import { createServerEnvironment } from "@/relay/serverEnvironment";
 import type { page_LogDetailPageQuery } from "@/__generated__/page_LogDetailPageQuery.graphql";
