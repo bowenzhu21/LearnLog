@@ -147,6 +147,21 @@ const parseCsv = (value: string): string[] =>
     .map((tag) => tag.trim())
     .filter((tag) => tag.length > 0);
 
+const useDebouncedValue = <T,>(value: T, delay: number): T => {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebounced(value);
+    }, delay);
+    return () => {
+      window.clearTimeout(handle);
+    };
+  }, [value, delay]);
+
+  return debounced;
+};
+
 const buildCreateCandidate = (state: CreateFormState) => {
   const title = state.title.trim();
   const reflection = state.reflection.trim();
@@ -221,76 +236,6 @@ const formatDate = (value: string): string => {
   });
 };
 
-const buildFilterInput = (state: FilterFormState): LearningLogFilterInput | null => {
-  const filter: LearningLogFilterInput = {};
-  const tagsAny = parseCsv(state.tagsAny);
-  const tagsAll = parseCsv(state.tagsAll);
-
-  if (state.q.trim()) {
-    filter.q = state.q.trim();
-  }
-  if (tagsAny.length > 0) {
-    filter.tagsAny = tagsAny;
-  }
-  if (tagsAll.length > 0) {
-    filter.tagsAll = tagsAll;
-  }
-  if (state.from) {
-    filter.from = new Date(state.from).toISOString();
-  }
-  if (state.to) {
-    filter.to = new Date(state.to).toISOString();
-  }
-
-  return Object.keys(filter).length > 0 ? filter : null;
-};
-
-const areArraysEqual = (a?: readonly string[], b?: readonly string[]) => {
-  if (a === b) {
-    return true;
-  }
-  if (!a || !b) {
-    return !a && !b;
-  }
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let index = 0; index < a.length; index += 1) {
-    if (a[index] !== b[index]) {
-      return false;
-    }
-  }
-  return true;
-};
-
-const areFiltersEqual = (
-  a: LearningLogFilterInput | null,
-  b: LearningLogFilterInput | null,
-) => {
-  if (a === b) {
-    return true;
-  }
-  if (!a || !b) {
-    return a === b;
-  }
-  if ((a.q ?? null) !== (b.q ?? null)) {
-    return false;
-  }
-  if ((a.from ?? null) !== (b.from ?? null)) {
-    return false;
-  }
-  if ((a.to ?? null) !== (b.to ?? null)) {
-    return false;
-  }
-  if (!areArraysEqual(a.tagsAny, b.tagsAny)) {
-    return false;
-  }
-  if (!areArraysEqual(a.tagsAll, b.tagsAll)) {
-    return false;
-  }
-  return true;
-};
-
 const CONNECTION_KEY = "LogsView_learningLogs";
 
 const getConnectionFilters = (filter: LearningLogFilterInput | null) => ({
@@ -301,8 +246,6 @@ const createTempId = () => `client:new-log:${Date.now()}`;
 
 export default function LogsView() {
   const [filterForm, setFilterForm] = useState<FilterFormState>(initialFilterState);
-  const [pendingFilter, setPendingFilter] = useState<LearningLogFilterInput | null>(null);
-  const [debouncedFilter, setDebouncedFilter] = useState<LearningLogFilterInput | null>(null);
   const [appliedFilter, setAppliedFilter] = useState<LearningLogFilterInput | null>(null);
   const [createForm, setCreateForm] = useState<CreateFormState>(initialCreateState);
   const [createError, setCreateError] = useState<MutationError>(null);
@@ -316,20 +259,18 @@ export default function LogsView() {
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
 
   const createTitleRef = useRef<HTMLInputElement>(null);
-  const lastSentFilterRef = useRef<LearningLogFilterInput | null>(null);
-  const skipStrictEffectRef = useRef(process.env.NODE_ENV !== "production");
-
-  const defaultFilter = useMemo(() => null as LearningLogFilterInput | null, []);
-  const queryVariables = useMemo(
+  const initialQueryVariables = useMemo(
     () => ({
       first: DEFAULT_PAGE_SIZE,
       after: null,
-      filter: appliedFilter ?? defaultFilter,
+      filter: null as LearningLogFilterInput | null,
     }),
-    [appliedFilter, defaultFilter],
+    [],
   );
 
-  const baseData = useLazyLoadQuery<LearningLogsQueryType>(learningLogsQuery, queryVariables);
+  const baseData = useLazyLoadQuery<LearningLogsQueryType>(learningLogsQuery, initialQueryVariables, {
+    fetchPolicy: "store-or-network",
+  });
 
   const { data, hasNext, isLoadingNext, loadNext, refetch } = usePaginationFragment<
     LogsViewPaginationQuery,
@@ -347,66 +288,59 @@ export default function LogsView() {
 
   const connectionFilters = useMemo(() => getConnectionFilters(appliedFilter), [appliedFilter]);
 
+  const activeFilter = useMemo(() => {
+    const q = filterForm.q.trim();
+    const tagsAny = parseCsv(filterForm.tagsAny);
+    const tagsAll = parseCsv(filterForm.tagsAll);
+    const from = filterForm.from ? new Date(filterForm.from).toISOString() : undefined;
+    const to = filterForm.to ? new Date(filterForm.to).toISOString() : undefined;
+
+    if (!q && tagsAny.length === 0 && tagsAll.length === 0 && !from && !to) {
+      return null;
+    }
+
+    return {
+      q: q || undefined,
+      tagsAny: tagsAny.length > 0 ? tagsAny : undefined,
+      tagsAll: tagsAll.length > 0 ? tagsAll : undefined,
+      from,
+      to,
+    } as LearningLogFilterInput | null;
+  }, [filterForm.q, filterForm.tagsAny, filterForm.tagsAll, filterForm.from, filterForm.to]);
+
+  const debouncedFilter = useDebouncedValue(activeFilter, 300);
+
+  const refetchVariables = useMemo(
+    () => ({
+      first: DEFAULT_PAGE_SIZE,
+      after: null as string | null,
+      filter: debouncedFilter ?? null,
+    }),
+    [debouncedFilter],
+  );
+
+  const lastSentKeyRef = useRef<string>(JSON.stringify(initialQueryVariables));
+
   useEffect(() => {
-    const nextFilter = buildFilterInput(filterForm);
-    setPendingFilter((prev) => (areFiltersEqual(prev, nextFilter) ? prev : nextFilter));
-  }, [filterForm]);
-
-  useEffect(() => {
-    if (areFiltersEqual(pendingFilter, debouncedFilter)) {
-      return;
-    }
-    const timeout = window.setTimeout(() => {
-      setDebouncedFilter((prev) => (areFiltersEqual(prev, pendingFilter) ? prev : pendingFilter));
-    }, 300);
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [pendingFilter, debouncedFilter]);
-
-  useEffect(() => {
-    if (skipStrictEffectRef.current) {
-      skipStrictEffectRef.current = false;
-      lastSentFilterRef.current = appliedFilter;
+    const key = JSON.stringify(refetchVariables);
+    if (key === lastSentKeyRef.current) {
       return;
     }
 
-    if (areFiltersEqual(debouncedFilter, appliedFilter)) {
-      lastSentFilterRef.current = debouncedFilter;
-      return;
-    }
-
-    if (areFiltersEqual(debouncedFilter, lastSentFilterRef.current)) {
-      return;
-    }
-
-    const targetFilter = debouncedFilter;
-    const previousFilter = appliedFilter;
-
-    lastSentFilterRef.current = targetFilter;
+    lastSentKeyRef.current = key;
+    setAppliedFilter(debouncedFilter ?? null);
 
     const disposable = refetch(
-      {
-        first: DEFAULT_PAGE_SIZE,
-        after: null,
-        filter: targetFilter ?? null,
-      },
+      refetchVariables,
       {
         fetchPolicy: "network-only",
-        onComplete: (error) => {
-          if (!error) {
-            setAppliedFilter(targetFilter);
-          } else {
-            lastSentFilterRef.current = previousFilter;
-          }
-        },
       },
     );
 
     return () => {
       disposable?.dispose();
     };
-  }, [debouncedFilter, appliedFilter, refetch]);
+  }, [debouncedFilter, refetch, refetchVariables]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       createTitleRef.current?.focus();
@@ -725,15 +659,10 @@ export default function LogsView() {
 
   const applyFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const nextFilter = buildFilterInput(filterForm);
-    setPendingFilter((prev) => (areFiltersEqual(prev, nextFilter) ? prev : nextFilter));
-    setDebouncedFilter((prev) => (areFiltersEqual(prev, nextFilter) ? prev : nextFilter));
   };
 
   const resetFilters = () => {
     setFilterForm(initialFilterState);
-    setPendingFilter(null);
-    setDebouncedFilter((prev) => (prev === null ? prev : null));
   };
 
   const handleCreateChange = (key: FormField) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {

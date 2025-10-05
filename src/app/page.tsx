@@ -1,8 +1,11 @@
+"use client";
+
 import RelayProvider from "@/relay/RelayProvider";
 import QuickAddCard from "./QuickAddCard";
 import RecentLogs from "./RecentLogs";
 
 export default function Home() {
+  console.log("✅ LearnLog Home rendered on client");
   return (
     <RelayProvider>
       <main className="min-h-screen bg-app">

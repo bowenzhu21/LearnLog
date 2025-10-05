@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { graphql } from "react-relay";
 import { fetchQuery } from "relay-runtime";
 
@@ -26,20 +25,36 @@ const logDetailQuery = graphql`
 export default async function LogDetailPage({
   params,
 }: {
-  params: {
-    id: string;
-  };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
   const environment = createServerEnvironment();
   const data = await fetchQuery<page_LogDetailPageQuery>(environment, logDetailQuery, {
-    id: params.id,
+    id,
   }).toPromise();
 
-  if (!data?.node || data.node.__typename !== "LearningLog") {
-    notFound();
+  const node = data?.node;
+
+  if (!node || node.__typename !== "LearningLog") {
+    return (
+      <div className="min-h-screen bg-app py-12">
+        <div className="container mx-auto max-w-3xl">
+          <article className="glass-panel rounded-xl p-8 shadow-soft text-center">
+            <h1 className="text-2xl font-semibold text-slate-900">Not found</h1>
+            <p className="mt-3 text-sm text-muted">We couldn&apos;t locate that learning log.</p>
+            <Link
+              href="/logs"
+              className="mt-8 inline-flex items-center gap-2 text-sm font-medium text-primary-600 hover:text-primary-700"
+            >
+              ← Back to logs
+            </Link>
+          </article>
+        </div>
+      </div>
+    );
   }
 
-  const log = data.node;
+  const log = node;
   const createdAt = new Date(log.createdAt);
 
   return (

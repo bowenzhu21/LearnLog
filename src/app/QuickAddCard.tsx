@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, type PayloadError } from "react-relay";
+import { useMutation } from "react-relay";
+import type { PayloadError } from "relay-runtime";
 
 import { createLearningLogMutation } from "@/relay/mutations/createLearningLogMutation";
 import { learningLogCreateSchema, mapZodIssuesToFieldErrors } from "@/lib/validation";
@@ -41,7 +42,23 @@ const extractValidationFields = (errors?: readonly PayloadError[] | null) => {
   if (!validationError) {
     return null;
   }
-  return (validationError.extensions?.fields ?? null) as Record<string, string> | null;
+  // Extensions is not typed, so use type assertion
+  const extensions = (validationError as { extensions?: { fields?: Record<string, string> } }).extensions;
+  return extensions?.fields ?? null;
+};
+// Type for mutation response
+type CreateLearningLogMutationResponse = {
+  createLearningLog?: {
+    log?: {
+      id: string;
+      title: string;
+      reflection: string;
+      tags: string[];
+      timeSpent: number;
+      sourceUrl?: string | null;
+      createdAt: string;
+    };
+  };
 };
 
 const mergeFieldErrors = (fields: Record<string, string>): FieldErrors => {
@@ -82,14 +99,14 @@ export default function QuickAddCard() {
   const titleRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!isInFlight && status !== "success") {
+    if (!isInFlight) {
       const frame = requestAnimationFrame(() => {
         titleRef.current?.focus();
       });
       return () => cancelAnimationFrame(frame);
     }
     return undefined;
-  }, [isInFlight, status]);
+  }, [isInFlight]);
 
   const handleChange = (key: FieldKey) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const value = event.target.value;
@@ -133,7 +150,8 @@ export default function QuickAddCard() {
     const validation = learningLogCreateSchema.safeParse(buildCreateCandidate(form));
 
     if (!validation.success) {
-      applyFieldErrors(mapZodIssuesToFieldErrors(validation.error.issues));
+      const fields = mapZodIssuesToFieldErrors(validation.error.issues);
+      applyFieldErrors(fields);
       return;
     }
 
@@ -164,7 +182,7 @@ export default function QuickAddCard() {
           },
         },
       },
-      onCompleted: (response, errors) => {
+  onCompleted: (response: unknown, errors: readonly PayloadError[] | null) => {
         const validationFields = extractValidationFields(errors);
         if (validationFields) {
           applyFieldErrors(validationFields);
@@ -173,8 +191,16 @@ export default function QuickAddCard() {
 
         setFieldErrors({});
         setStatus("success");
-        setLastSavedTitle(response?.createLearningLog?.log?.title ?? payload.title);
+        const resp = response as CreateLearningLogMutationResponse;
+        const logTitle = resp.createLearningLog?.log?.title ?? payload.title;
+        setLastSavedTitle(logTitle);
         setForm(initialFormState);
+        // Optimistically update RecentLogs
+        if (resp.createLearningLog?.log) {
+          window.dispatchEvent(
+            new CustomEvent('learnlog:created', { detail: resp.createLearningLog.log })
+          );
+        }
       },
       onError: (error) => {
         setSubmitError(error.message);
@@ -203,8 +229,8 @@ export default function QuickAddCard() {
         <div className="mt-6 flex flex-col gap-4">
           <div className="rounded-lg border border-primary-200 bg-white/80 p-4 text-sm text-slate-700">
             <p>
-              <span className="font-medium text-primary-700">Saved!</span>
-              {lastSavedTitle ? ` “${lastSavedTitle}”` : ""} captured.
+              <span className="font-medium text-primary-700">Success!</span> Your log
+              {lastSavedTitle ? ` “${lastSavedTitle}”` : ""} was saved.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -317,10 +343,12 @@ export default function QuickAddCard() {
           <div className="flex justify-end">
             <button
               type="submit"
+              data-testid="quickadd-submit"
               disabled={isSubmitDisabled}
+              aria-busy={isInFlight}
               className="rounded-full bg-primary-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-primary-300"
             >
-              {isInFlight ? "Saving…" : "Submit"}
+              {isInFlight ? "Saving…" : "Save"}
             </button>
           </div>
         </form>
