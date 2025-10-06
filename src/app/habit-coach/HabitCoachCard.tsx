@@ -1,5 +1,6 @@
 "use client";
 
+import type { JSX } from "react";
 import { useActionState, useEffect, useMemo, useState } from "react";
 
 import {
@@ -115,4 +116,3 @@ export function HabitCoachCard({ action, hasLogs }: HabitCoachCardProps): JSX.El
     </section>
   );
 }
-

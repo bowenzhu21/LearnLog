@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { JSX } from "react";
 
 import { minutesByTag, sumMinutes } from "@/lib/analytics";
 import { HabitCoachCard } from "./HabitCoachCard";
