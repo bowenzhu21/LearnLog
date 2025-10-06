@@ -1,61 +1,93 @@
+import OpenAI from "openai";
 
 import { minutesByTag, sumMinutes, type Log } from "@/lib/analytics";
 
+let cachedClient: OpenAI | null = null;
+let skipUntilMillis = 0;
+
 const MODEL = "gpt-4o-mini";
+const RETRY_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+
+const getClient = (): OpenAI => {
+  if (!cachedClient) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY is not set");
+    }
+    cachedClient = new OpenAI({ apiKey });
+  }
+  return cachedClient;
+};
 
 const buildPrompt = (logs: Log[]): string => {
   const totalMinutes = sumMinutes(logs);
-  const entries = logs.length;
-  const tags = minutesByTag(logs);
-  const topTagLines = tags
-    .slice(0, 5)
-    .map((tag) => `- ${tag.tag}: ${tag.minutes} minutes`)
-    .join("\n");
-
-  const lines = logs
-    .slice(0, 40)
-    .map(
-      (log) =>
-        `Title: ${log.title ?? "(untitled)"}\nDate: ${log.createdAt}\nMinutes: ${log.timeSpent}\nTags: ${log.tags.join(", " )}\nReflection: ${log.reflection ?? ""}`
-    )
-    .join("\n\n---\n\n");
-
-  return `You are a concise learning coach. Summarize the user's week of learning into 150-200 words using markdown bullet sections. Highlight themes, note 3-5 takeaways, list top tags by time, and suggest two focused next steps. Keep an encouraging, pragmatic tone.
-
-Context:
-- Total entries: ${entries}
-- Total minutes: ${totalMinutes}
-- Top tags (minutes):
-${topTagLines || "- none"}
-
-Logs:
-${lines}`;
-};
-
-const buildHeuristicSummary = (logs: Log[]): string => {
-  const totalMinutes = sumMinutes(logs);
-  const entries = logs.length;
-  const tags = minutesByTag(logs);
-  const topTags = tags.slice(0, 3);
-
-  const tagLine =
-    topTags.length > 0
-      ? topTags.map((tag) => `• ${tag.tag}: ${tag.minutes} min`).join("\n")
-      : "• No dominant tags logged";
+  const reflections =
+    logs
+      .slice(0, 50)
+      .map((log, index) => {
+        const title = log.title?.trim();
+        const label = title && title.length > 0 ? title : `Entry ${index + 1}`;
+        const minutes = Number.isFinite(log.timeSpent) ? log.timeSpent : 0;
+        const reflection = log.reflection?.trim() || "No reflection provided.";
+        return `- ${label} (${minutes} min): ${reflection}`;
+      })
+      .join("\n") || "- No reflections recorded.";
 
   return [
-    "**Weekly Snapshot**",
-    `• Captured ${entries} learning sessions totalling ${totalMinutes} minutes.`,
-    tagLine,
-    "",
-    "**Highlights & Takeaways**",
-    "• Consistent progress across your top topics — reflect on what moved the needle most.",
-    "• Capture a quick summary for each session so future you can revisit the insights.",
-    "",
-    "**Next Week Ideas**",
-    "• Double down on the tag with the most minutes to deepen expertise.",
-    "• Schedule one focused session on a lesser-used tag to keep breadth in your routine.",
+    "You are a helpful assistant summarizing learning reflections.",
+    `Summarize the following ${logs.length} entries into a concise, engaging weekly reflection (3–5 sentences).`,
+    "Highlight key themes, what the person learned, and any progress patterns.",
+    `Total time: ${totalMinutes} minutes.`,
+    "Reflections:",
+    reflections,
   ].join("\n");
+};
+
+const buildFallbackSummary = (logs: Log[], reason: string, nextRetryIso?: string): string => {
+  const totalMinutes = sumMinutes(logs);
+  const entries = logs.length;
+  const tagLines = minutesByTag(logs)
+    .slice(0, 3)
+    .map((tag) => `• ${tag.tag}: ${tag.minutes} min`)
+    .join("\n");
+  const reflections = logs
+    .slice(0, 3)
+    .map((log, index) => {
+      const title = log.title?.trim() || `Entry ${index + 1}`;
+      return `• ${title}: ${log.reflection?.trim() || "No reflection captured."}`;
+    })
+    .join("\n");
+
+  const retryLine = nextRetryIso ? `• Next retry: ${nextRetryIso}` : "";
+
+  return [
+    `Summary unavailable (${reason}). Falling back to an automatic recap.`,
+    "",
+    `• Sessions: ${entries}`,
+    `• Total minutes: ${totalMinutes}`,
+    retryLine,
+    tagLines ? `• Top tags:\n${tagLines}` : "• Top tags: not enough data",
+    reflections ? `\nHighlights:\n${reflections}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+};
+
+const isQuotaError = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const candidate = error as { status?: number; code?: string; error?: { code?: string; type?: string } };
+  if (candidate.status === 429) {
+    return true;
+  }
+  if (candidate.code === "insufficient_quota") {
+    return true;
+  }
+  if (candidate.error && (candidate.error.code === "insufficient_quota" || candidate.error.type === "insufficient_quota")) {
+    return true;
+  }
+  return false;
 };
 
 export async function generateWeeklySummary(logs: Log[]): Promise<string> {
@@ -63,43 +95,41 @@ export async function generateWeeklySummary(logs: Log[]): Promise<string> {
     return "No learning activity recorded for this range.";
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return buildHeuristicSummary(logs);
+  const now = Date.now();
+  if (skipUntilMillis && now < skipUntilMillis) {
+    return buildFallbackSummary(logs, "quota exceeded", new Date(skipUntilMillis).toISOString());
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        temperature: 0.7,
-        messages: [
-          { role: "system", content: "You are an encouraging learning coach who writes concise weekly summaries." },
-          { role: "user", content: buildPrompt(logs) },
-        ],
-      }),
+    const client = getClient();
+    const response = await client.chat.completions.create({
+      model: MODEL,
+      temperature: 0.7,
+      messages: [
+        { role: "system", content: "You are a helpful assistant summarizing learning reflections." },
+        { role: "user", content: buildPrompt(logs) },
+      ],
     });
 
-    if (!response.ok) {
-      throw new Error(`OpenAI request failed: ${response.status}`);
-    }
-
-    const json = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = json.choices?.[0]?.message?.content;
+    const content = response.choices[0]?.message?.content;
     if (!content) {
       throw new Error("No summary returned");
     }
     return content.trim();
   } catch (error) {
-    console.error("generateWeeklySummary fallback", error);
-    return buildHeuristicSummary(logs);
+    if (isQuotaError(error)) {
+      skipUntilMillis = Date.now() + RETRY_COOLDOWN_MS;
+      const retryIso = new Date(skipUntilMillis).toISOString();
+      const message = `generateWeeklySummary quota error – using fallback summary until ${retryIso}.`;
+      const normalizedError =
+        error && typeof error === "object" && "message" in error
+          ? (error as { message?: string }).message
+          : String(error);
+      console.warn(`${message} Details: ${normalizedError}`);
+      return buildFallbackSummary(logs, "quota exceeded", retryIso);
+    }
+
+    console.error("generateWeeklySummary error", error);
+    return "Summary unavailable (API error).";
   }
 }
-

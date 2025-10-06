@@ -1,6 +1,8 @@
 
 "use server";
 
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import type { Log } from "@/lib/analytics";
 
@@ -31,13 +33,25 @@ export async function fetchLogsRange({ from, to }: FetchLogsRangeArgs): Promise<
         }
       : {};
 
-  const records = await prisma.learningLog.findMany({
-    where,
-    orderBy: [
-      { createdAt: "desc" },
-      { id: "desc" },
-    ],
-  });
+  let records;
+  try {
+    records = await prisma.learningLog.findMany({
+      where,
+      orderBy: [
+        { createdAt: "desc" },
+        { id: "desc" },
+      ],
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientInitializationError ||
+      (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P1001")
+    ) {
+      console.warn("fetchLogsRange database unavailable, returning empty logs", error);
+      return { logs: [] };
+    }
+    throw error;
+  }
 
   const logs: Log[] = records.map((record) => ({
     id: record.id,
