@@ -21,35 +21,30 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   function Navbar() {
     return (
-      <nav className="sticky top-0 z-50 backdrop-blur-md bg-slate-900/70 border-b border-white/10">
-        <div className="mx-auto max-w-6xl flex items-center justify-between px-6 py-3">
-          {/* Logo / Brand */}
+      <nav className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/70 backdrop-blur-2xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link
             href="/"
-            className="text-xl font-semibold tracking-tight text-white hover:text-primary-400 transition"
+            className="text-xl font-semibold tracking-tight text-white transition hover:text-indigo-300"
           >
-            LearnLog<span className="text-primary-400">.</span>
+            LearnLog<span className="text-indigo-300">.</span>
           </Link>
 
-          {/* Navigation Links */}
-          <div className="flex gap-6 text-sm font-medium text-slate-300">
-            <Link
-              href="/"
-              className="text-white hover:text-primary-400 transition-colors duration-200"
-            >
+          <div className="flex items-center gap-4 text-sm font-medium text-slate-200">
+            <Link href="/" className="rounded-full px-4 py-2 transition hover:bg-white/10 hover:text-white">
               Home
             </Link>
-            <Link
-              href="/logs/all"
-              className="text-white hover:text-primary-400 transition-colors duration-200"
-            >
+            <Link href="/logs/all" className="rounded-full px-4 py-2 transition hover:bg-white/10 hover:text-white">
               Logs
             </Link>
-            <Link
-              href="/analytics"
-              className="text-white hover:text-primary-400 transition-colors duration-200"
-            >
+            <Link href="/analytics" className="rounded-full px-4 py-2 transition hover:bg-white/10 hover:text-white">
               Analytics
+            </Link>
+            <Link
+              href="/habit-coach"
+              className="rounded-full border border-indigo-300/70 bg-indigo-500/20 px-4 py-2 text-sm font-semibold text-indigo-100 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-500/30 hover:text-white"
+            >
+              Habit Coach
             </Link>
           </div>
         </div>

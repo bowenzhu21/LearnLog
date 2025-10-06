@@ -8,6 +8,7 @@ import {
   sumMinutes,
 } from "@/lib/analytics";
 import { fetchLogsRange } from "./actions";
+import { LearningTips } from "./LearningTips";
 import { generateWeeklySummary } from "./summary";
 
 const clampRange = (range: string | undefined) => (range && ["7d", "30d", "all"].includes(range) ? range : "7d");
@@ -65,13 +66,23 @@ export default async function AnalyticsPage({
   const sparklinePath = generateSparklinePath(daily);
   const showSummary = awaitedParams.summary === "1";
   const summary = showSummary && logs.length > 0 ? await generateWeeklySummary(logs) : null;
+  const summaryTitle =
+    rangeKey === "7d"
+      ? "Weekly summary (AI-powered)"
+      : rangeKey === "30d"
+      ? "30-day summary (AI-powered)"
+      : "All-time summary (AI-powered)";
 
   return (
-    <main className="min-h-screen bg-app">
-      <section className="container mx-auto flex flex-col gap-10 py-16">
+    <main className="relative min-h-screen">
+      <div className="pointer-events-none absolute inset-0 opacity-30 mix-blend-screen" style={{ backgroundImage: "var(--gradient-accent)" }} />
+      <section className="page-shell relative">
         <header className="flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
-            <h1 className="text-3xl font-semibold text-slate-900">Learning analytics</h1>
+            <div>
+              <p className="text-sm uppercase tracking-[0.28em] text-indigo-200/80">Analytics</p>
+              <h1 className="text-3xl font-semibold text-white">Learning analytics</h1>
+            </div>
           </div>
 
           <nav className="flex gap-2">
@@ -79,7 +90,11 @@ export default async function AnalyticsPage({
               <Link
                 key={key}
                 href={`/analytics?range=${key}${showSummary ? "&summary=1" : ""}`}
-                className={`rounded-full border px-4 py-1 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white ${rangeKey === key ? "border-primary-300 bg-primary-50 text-primary-700" : "border-slate-200 text-muted hover:border-primary-200 hover:text-primary-600"}`}
+                className={`rounded-full border px-4 py-1 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white ${
+                  rangeKey === key
+                    ? "border-indigo-300 bg-indigo-500/20 text-indigo-100 shadow-sm"
+                    : "border-white/30 text-slate-200 hover:border-indigo-200 hover:text-white"
+                }`}
               >
                 {key === "7d" ? "Last 7 days" : key === "30d" ? "Last 30 days" : "All time"}
               </Link>
@@ -109,9 +124,9 @@ export default async function AnalyticsPage({
           </div>
         </section>
 
-        <section className="glass-panel rounded-xl p-6 shadow-soft">
+        <section className="glass-panel rounded-xl p-6 shadow-soft text-slate-900">
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold text-slate-900">Weekly summary</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{summaryTitle}</h2>
             <div className="flex gap-2">
               <form className="flex" action="/analytics" method="get">
                 <input type="hidden" name="range" value={rangeKey} />
@@ -119,7 +134,7 @@ export default async function AnalyticsPage({
                 <button
                   type="submit"
                   disabled={logs.length === 0}
-                  className="rounded-full border border-primary-300 px-4 py-1 text-sm font-medium text-primary-600 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                  className="rounded-full border border-indigo-300 px-4 py-1 text-sm font-medium text-indigo-600 transition hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
                 >
                   Generate summary
                 </button>
@@ -127,7 +142,7 @@ export default async function AnalyticsPage({
               {showSummary ? (
                 <Link
                   href={`/analytics?range=${rangeKey}`}
-                  className="rounded-full border border-slate-200 px-4 py-1 text-sm text-muted transition hover:border-primary-200 hover:text-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                  className="rounded-full border border-slate-200 px-4 py-1 text-sm text-slate-500 transition hover:border-indigo-200 hover:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
                 >
                   Clear
                 </Link>
@@ -137,11 +152,11 @@ export default async function AnalyticsPage({
 
           <div className="mt-4 rounded-lg bg-white/70 p-4 text-sm text-slate-700">
             {logs.length === 0 ? (
-              <p className="text-muted">No activity in this range yet. Add a log to generate a summary.</p>
+              <p className="text-slate-600">No activity in this range yet. Add a log to generate a summary.</p>
             ) : showSummary ? (
               <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-700">{summary}</pre>
             ) : (
-              <p className="text-muted">Click generate to synthesize this range into a weekly narrative.</p>
+              <p className="text-slate-600">Click generate to synthesize this range into a narrative.</p>
             )}
           </div>
         </section>
@@ -150,16 +165,16 @@ export default async function AnalyticsPage({
           <div className="glass-panel rounded-xl p-6 shadow-soft">
             <h2 className="text-lg font-semibold text-slate-900">Minutes by tag</h2>
             {tags.length === 0 ? (
-              <p className="mt-4 text-sm text-muted">No tags recorded in this range.</p>
+              <p className="mt-4 text-sm text-slate-600">No tags recorded in this range.</p>
             ) : (
               <table className="mt-4 w-full table-fixed text-left text-sm text-slate-700">
-                <thead className="text-xs uppercase tracking-wide text-muted">
+                <thead className="text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="w-2/3 pb-2">Tag</th>
                     <th className="w-1/3 pb-2 text-right">Minutes</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-200">
                   {tags.map((tag) => (
                     <tr key={tag.tag}>
                       <td className="py-2">#{tag.tag}</td>
@@ -174,12 +189,12 @@ export default async function AnalyticsPage({
           <div className="glass-panel rounded-xl p-6 shadow-soft">
             <h2 className="text-lg font-semibold text-slate-900">Daily minutes</h2>
             {daily.length === 0 ? (
-              <p className="mt-4 text-sm text-muted">No activity recorded in this range.</p>
+              <p className="mt-4 text-sm text-slate-600">No activity recorded in this range.</p>
             ) : (
               <div className="mt-6 flex flex-col gap-3">
                 <svg
                   viewBox="0 0 100 100"
-                  className="h-24 w-full text-primary-500"
+                  className="h-24 w-full text-indigo-500"
                   preserveAspectRatio="none"
                 >
                   <path
@@ -191,7 +206,7 @@ export default async function AnalyticsPage({
                     strokeLinecap="round"
                   />
                 </svg>
-                <div className="grid grid-cols-2 gap-1 text-xs text-muted">
+                <div className="grid grid-cols-2 gap-1 text-xs text-slate-500">
                   <span>Start: {daily[0].day}</span>
                   <span className="text-right">End: {daily[daily.length - 1].day}</span>
                 </div>
@@ -199,6 +214,8 @@ export default async function AnalyticsPage({
             )}
           </div>
         </section>
+
+        <LearningTips />
       </section>
     </main>
   );

@@ -113,6 +113,7 @@ export default function QuickAddCard() {
   const [lastSavedTitle, setLastSavedTitle] = useState<string>("");
   const titleRef = useRef<HTMLInputElement>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isInFlight) {
@@ -148,24 +149,18 @@ export default function QuickAddCard() {
 
   const derivedFieldErrors = useMemo(() => {
     const errors: FieldErrors = {};
-    if (!createValidation.success) {
+    if (hasAttemptedSubmit && !createValidation.success) {
       Object.assign(errors, mergeFieldErrors(mapZodIssuesToFieldErrors(createValidation.error.issues)));
     }
     if (urlError) {
       errors.sourceUrl = urlError;
     }
     return errors;
-  }, [createValidation, urlError]);
+  }, [createValidation, hasAttemptedSubmit, urlError]);
 
-  const visibleFieldErrors = useMemo(
-    () => ({
-      ...derivedFieldErrors,
-      ...fieldErrors,
-    }),
-    [derivedFieldErrors, fieldErrors],
-  );
+  const visibleFieldErrors = useMemo(() => ({ ...derivedFieldErrors, ...fieldErrors }), [derivedFieldErrors, fieldErrors]);
 
-  const isSubmitDisabled = isInFlight || !createValidation.success;
+  const isSubmitDisabled = isInFlight;
 
   const applyFieldErrors = (fields: Record<string, string>) => {
     setFieldErrors((prev) => ({ ...prev, ...mergeFieldErrors(fields) }));
@@ -174,6 +169,7 @@ export default function QuickAddCard() {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setHasAttemptedSubmit(true);
     setSubmitError(null);
 
     const validation = learningLogCreateSchema.safeParse(buildCreateCandidate(form));
@@ -224,6 +220,7 @@ export default function QuickAddCard() {
         const logTitle = resp.createLearningLog?.log?.title ?? payload.title;
         setLastSavedTitle(logTitle);
         setForm(initialFormState);
+        setHasAttemptedSubmit(false);
         // Optimistically update RecentLogs
         if (resp.createLearningLog?.log) {
           // Only send required fields for RecentLog
@@ -252,6 +249,7 @@ export default function QuickAddCard() {
     setSubmitError(null);
     setFieldErrors({});
     setForm(initialFormState);
+    setHasAttemptedSubmit(false);
     requestAnimationFrame(() => {
       titleRef.current?.focus();
     });
@@ -260,23 +258,27 @@ export default function QuickAddCard() {
   return (
     <>
       <section className="glass-panel mx-auto max-w-2xl rounded-xl p-8">
-        <h2 className="text-2xl font-semibold text-black">Quick Add</h2>
-        <p className="mt-2 text-sm text-muted">
-        </p>
+        <div className="space-y-2">
+          <span className="badge-soft">Log a new insight</span>
+          <h2 className="text-2xl font-semibold text-slate-900">Quick add</h2>
+          <p className="text-sm text-slate-600">
+            Capture the highlight, tag it for later, and track the minutes invested.
+          </p>
+        </div>
 
         {status === "success" ? (
           <div className="mt-6 flex flex-col gap-4">
-            <div className="rounded-lg border border-primary-200 bg-white/80 p-4 text-sm text-black">
+            <div className="rounded-lg border border-indigo-200 bg-white p-4 text-sm text-slate-800">
               <p>
-                <span className="font-medium text-primary-700">Success!</span> Your log
-                {lastSavedTitle ? ` “${lastSavedTitle}”` : ""} was saved.
+                <span className="font-medium text-indigo-600">Success!</span> Your log
+                {lastSavedTitle ? ` "${lastSavedTitle}"` : ""} was saved.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
                 onClick={resetForm}
-                className="rounded-full border border-primary-300 px-5 py-2 text-sm font-medium text-primary-600 transition hover:border-primary-400 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                className="rounded-full border border-indigo-300 px-5 py-2 text-sm font-medium text-indigo-600 transition hover:border-indigo-400 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
               >
                 Add another
               </button>
@@ -285,14 +287,14 @@ export default function QuickAddCard() {
         ) : (
           <form className="mt-6 grid gap-4" onSubmit={handleSubmit} noValidate>
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-black" htmlFor="quick-title">
+              <label className="text-sm font-medium text-slate-800" htmlFor="quick-title">
                 Title
               </label>
               <input
                 id="quick-title"
                 ref={titleRef}
                 disabled={isInFlight}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                 value={form.title}
                 onChange={handleChange("title")}
                 placeholder="What did you learn?"
@@ -301,14 +303,14 @@ export default function QuickAddCard() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-black" htmlFor="quick-reflection">
+              <label className="text-sm font-medium text-slate-800" htmlFor="quick-reflection">
                 Reflection
               </label>
               <textarea
                 id="quick-reflection"
                 disabled={isInFlight}
                 rows={4}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                 value={form.reflection}
                 onChange={handleChange("reflection")}
                 placeholder="Key takeaways, insights, or notes"
@@ -320,22 +322,22 @@ export default function QuickAddCard() {
 
             <div className="grid gap-4 md:grid-cols-3">
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-black" htmlFor="quick-tags">
+                <label className="text-sm font-medium text-slate-800" htmlFor="quick-tags">
                   Tags
                 </label>
                 <input
                   id="quick-tags"
                   disabled={isInFlight}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                   value={form.tags}
                   onChange={handleChange("tags")}
-                  placeholder="react, ui"
+                  placeholder="french, maths"
                 />
                 {visibleFieldErrors.tags ? <p className="text-xs text-red-600">{visibleFieldErrors.tags}</p> : null}
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-black" htmlFor="quick-time">
+                <label className="text-sm font-medium text-slate-800" htmlFor="quick-time">
                   Time spent (minutes)
                 </label>
                 <input
@@ -344,7 +346,7 @@ export default function QuickAddCard() {
                   min={1}
                   max={1440}
                   disabled={isInFlight}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                   value={form.timeSpent}
                   onChange={handleChange("timeSpent")}
                 />
@@ -354,13 +356,13 @@ export default function QuickAddCard() {
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-black" htmlFor="quick-source">
-                  Source URL
+                <label className="text-sm font-medium text-slate-800" htmlFor="quick-source">
+                  Source
                 </label>
                 <input
                   id="quick-source"
                   disabled={isInFlight}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-primary-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
                   value={form.sourceUrl}
                   onChange={handleChange("sourceUrl")}
                   placeholder="https://"
@@ -379,9 +381,9 @@ export default function QuickAddCard() {
                 data-testid="quickadd-submit"
                 disabled={isSubmitDisabled}
                 aria-busy={isInFlight}
-                className="rounded-full bg-primary-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-primary-300"
+                className="rounded-full bg-indigo-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
               >
-                {isInFlight ? "Saving…" : "Save"}
+                {isInFlight ? "Saving..." : "Save"}
               </button>
             </div>
           </form>
@@ -389,7 +391,7 @@ export default function QuickAddCard() {
       </section>
       {toast && (
         <div
-          className="fixed bottom-6 right-6 z-50 rounded-lg bg-primary-700 px-4 py-2 text-sm text-white shadow-lg animate-fadein"
+          className="fixed bottom-6 right-6 z-50 rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white shadow-lg animate-fadein"
           role="status"
           aria-live="polite"
         >

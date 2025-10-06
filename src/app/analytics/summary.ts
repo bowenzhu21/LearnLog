@@ -1,23 +1,13 @@
-import OpenAI from "openai";
-
 import { minutesByTag, sumMinutes, type Log } from "@/lib/analytics";
-
-let cachedClient: OpenAI | null = null;
-let skipUntilMillis = 0;
+import {
+  currentRetryIso,
+  getOpenAIClient,
+  isQuotaError,
+  markQuotaRetry,
+  shouldThrottleOpenAI,
+} from "@/lib/openaiClient";
 
 const MODEL = "gpt-4o-mini";
-const RETRY_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
-
-const getClient = (): OpenAI => {
-  if (!cachedClient) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("OPENAI_API_KEY is not set");
-    }
-    cachedClient = new OpenAI({ apiKey });
-  }
-  return cachedClient;
-};
 
 const buildPrompt = (logs: Log[]): string => {
   const totalMinutes = sumMinutes(logs);
@@ -35,7 +25,7 @@ const buildPrompt = (logs: Log[]): string => {
 
   return [
     "You are a helpful assistant summarizing learning reflections.",
-    `Summarize the following ${logs.length} entries into a concise, engaging weekly reflection (3–5 sentences).`,
+    `Summarize the following ${logs.length} entries into a concise, engaging weekly reflection (3-5 sentences).`,
     "Highlight key themes, what the person learned, and any progress patterns.",
     `Total time: ${totalMinutes} minutes.`,
     "Reflections:",
@@ -73,35 +63,22 @@ const buildFallbackSummary = (logs: Log[], reason: string, nextRetryIso?: string
     .join("\n");
 };
 
-const isQuotaError = (error: unknown): boolean => {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-  const candidate = error as { status?: number; code?: string; error?: { code?: string; type?: string } };
-  if (candidate.status === 429) {
-    return true;
-  }
-  if (candidate.code === "insufficient_quota") {
-    return true;
-  }
-  if (candidate.error && (candidate.error.code === "insufficient_quota" || candidate.error.type === "insufficient_quota")) {
-    return true;
-  }
-  return false;
-};
-
 export async function generateWeeklySummary(logs: Log[]): Promise<string> {
   if (logs.length === 0) {
     return "No learning activity recorded for this range.";
   }
 
-  const now = Date.now();
-  if (skipUntilMillis && now < skipUntilMillis) {
-    return buildFallbackSummary(logs, "quota exceeded", new Date(skipUntilMillis).toISOString());
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("generateWeeklySummary error: missing OPENAI_API_KEY");
+    return "Summary unavailable (API error).";
+  }
+
+  if (shouldThrottleOpenAI()) {
+    return buildFallbackSummary(logs, "quota exceeded", currentRetryIso());
   }
 
   try {
-    const client = getClient();
+    const client = getOpenAIClient();
     const response = await client.chat.completions.create({
       model: MODEL,
       temperature: 0.7,
@@ -118,9 +95,8 @@ export async function generateWeeklySummary(logs: Log[]): Promise<string> {
     return content.trim();
   } catch (error) {
     if (isQuotaError(error)) {
-      skipUntilMillis = Date.now() + RETRY_COOLDOWN_MS;
-      const retryIso = new Date(skipUntilMillis).toISOString();
-      const message = `generateWeeklySummary quota error – using fallback summary until ${retryIso}.`;
+      const retryIso = markQuotaRetry();
+      const message = `generateWeeklySummary quota error - using fallback summary until ${retryIso}.`;
       const normalizedError =
         error && typeof error === "object" && "message" in error
           ? (error as { message?: string }).message
