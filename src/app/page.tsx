@@ -13,7 +13,7 @@ export default function Home() {
         <div className="absolute inset-0 opacity-25 mix-blend-screen" style={{ backgroundImage: "var(--gradient-accent)" }} />
         <section className="page-shell relative">
           <div className="mx-auto max-w-3xl text-center space-y-4">
-            <span className="badge-soft mx-auto">Personal learning hub</span>
+            <span className="badge-soft mx-auto">Personal Learning Hub</span>
             <h1 className="text-4xl font-semibold text-white sm:text-5xl">
               LearnLog helps you capture, tag, and reflect on everything you learn.
             </h1>
