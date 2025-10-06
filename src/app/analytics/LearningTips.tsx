@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import type { JSX } from "react";
 
 const TIPS: Array<{ title: string; description: string }> = [
   {
@@ -19,7 +19,7 @@ const TIPS: Array<{ title: string; description: string }> = [
   },
 ];
 
-export function LearningTips(): ReactElement {
+export function LearningTips(): JSX.Element {
   return (
     <section className="glass-panel rounded-xl p-6 shadow-soft">
       <h2 className="text-lg font-semibold text-slate-900">Learning tips</h2>
