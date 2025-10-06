@@ -1,3 +1,5 @@
+import type { ReactElement } from "react";
+
 const TIPS: Array<{ title: string; description: string }> = [
   {
     title: "Schedule reflection time",
@@ -17,7 +19,7 @@ const TIPS: Array<{ title: string; description: string }> = [
   },
 ];
 
-export function LearningTips(): JSX.Element {
+export function LearningTips(): ReactElement {
   return (
     <section className="glass-panel rounded-xl p-6 shadow-soft">
       <h2 className="text-lg font-semibold text-slate-900">Learning tips</h2>
